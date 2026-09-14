@@ -1,76 +1,96 @@
-# SmartBridge App
+# SmartBridge Messages
 
-SmartBridge is a Flutter-based communication assistant that combines:
+SmartBridge Messages is an accessibility-focused messaging app that lets a
+**blind person** and a **deaf person** hold one shared conversation.
 
-- Real-time sign recognition using camera and landmark-based model inference
-- Speech-to-text input
-- Text-to-speech output
-- Accessibility-focused controls
+> **Different ways of communicating, one shared conversation.**
 
-## Supported Targets
+It builds on the original SmartBridge sign-language translator: the camera
+sign-recognition pipeline, speech-to-text, text-to-speech, onboarding and all
+accessibility settings are preserved and reachable inside the new app
+(Settings → Sign tools).
 
-- Android (primary runtime)
-- Web
+## Communication flows
 
-Unneeded platform scaffolding for iOS, macOS, Linux, and Windows has been removed to keep this project focused and lighter.
+| Direction | Pipeline |
+| --- | --- |
+| Blind → Deaf | Voice → Speech-to-Text → **simplified** short English → preview → send |
+| Deaf → Blind | Typed input → **improved** natural English → emotion picker → preview → send → spoken aloud (emotion first) |
 
-## Version
+Translation is deterministic, local and rule-based (no network): the same
+input always produces the same output, and the chat always keeps **both** the
+original and the translated text. Emotions (Happy / Sad / Angry / Shy) are
+always chosen manually — the app never infers feelings.
 
-- Current version: 1.0.0+1
-- Last updated: April 15, 2026
+## Friend system (offline-first, meet in person)
 
-## Core Pages
+* No public search, directory or random invites exist anywhere.
+* One side shows an expiring invite code (QR + short code, 30-minute TTL).
+* The other side scans the QR or types the short code, then **both confirm**.
+* Codes carry only display name, role and id — never contact details.
+* Removing a friend deletes the conversation and blocks stale codes.
 
-1. Translate
-- Live camera sign recognition
-- Speech-to-text capture
-- Text-to-speech playback
+## Chat transport
 
-2. History
-- Stores recognized signs, speech captures, and spoken outputs
-- Supports history clearing
+Messages are stored on-device **before** delivery. Live delivery uses the
+local Wi-Fi: UDP broadcast discovery (port 45123) plus direct TCP messages
+(port 45124). If a friend is unreachable the message stays marked *Pending*
+and is retried automatically — nothing is ever lost while offline.
 
-3. Settings
-- Accessibility options: text size, contrast, reduced motion, haptics
-- Voice and recognition settings
-- Permission shortcut to system app settings
+## Screens
 
-4. About
-- App details and version information
-- Functional summary and usage notice
+1. Welcome / Onboarding (original flow, preserved)
+2. Setup — "I AM BLIND" / "I AM DEAF"; the whole UI adapts
+3. Home — blind: giant spoken buttons; deaf: conversation list + unread badges
+4. Friends — list, open chat, remove friend
+5. Add Friend — expiring QR, typed fallback, confirmation
+6. Chat — bubbles with original + translated text, emotion badges, delivery
+   status; blind mode adds Play / Replay / Pause / Stop TTS controls
+7. Blind Translator — big microphone, live transcript, simplified preview
+8. Deaf Translator — typed input, live improvement, emotion picker, preview
+9. Settings — profile, role, TTS rate/pitch/volume, notifications, vibration,
+   font size, high contrast, reduce motion, delete conversations, remove
+   friends, privacy notes, and the original sign-tool settings
 
-## First-Launch Flow
+## Project structure
 
-On first opening, users see swipeable onboarding pages that explain:
+```
+lib/
+  main.dart                  entry point + service wiring
+  database/local_database.dart   offline-first storage (profile/friends/messages)
+  models/                    emotion, user profile, chat message, UI prefs
+  screens/                   setup, home, friends, add friend, chat, translators, settings
+    legacy/                  preserved SmartBridge screens (onboarding, sign translator, ...)
+  services/                  translation, stt, tts, session, friends, chat, connectivity
+    transport/lan_transport.dart  UDP discovery + TCP chat for local delivery
+  widgets/                   theme, branding, message bubble, emotion badge, big buttons
+```
 
-- What SmartBridge does
-- Main translation functions
-- Hand-sign tutorial reference image
-- Accessibility support
-- Expanded Terms and Conditions with usage and safety notes
+## Permissions
 
-The app is only accessible after checking the terms acceptance box.
+Microphone, camera and notifications are requested **only when the related
+feature is first used**, never at startup. Storage access is not required;
+all data lives in app-private storage.
 
-## Technical Notes
+## Error handling
 
-- Main app entry and UI flow: `lib/main.dart`
-- Services:
-  - `lib/services/camera_service.dart`
-  - `lib/services/model_service.dart`
-  - `lib/services/permission_handler.dart`
-- Model assets:
-  - `assets/models/model_float32.tflite`
-  - `assets/models/labels.txt`
+* Microphone denied → "Microphone permission is required for voice messages." with Open Settings.
+* Speech not understood → "We couldn't understand the speech. Please try again."
+* Translation failure → the original text is sent instead of dropping the message.
+* Offline → banner: "You're offline. Messages will be synchronized when connection is restored."
+* Invalid/expired code → "Invalid or expired friend code."
 
-## Run Commands
+## Run
 
 ```bash
 flutter pub get
-flutter run
+flutter run            # Android is the primary target
 ```
 
 ## Tests
 
 ```bash
-flutter test
+flutter test           # includes acceptance tests A (blind simplify) and
+                       # B (deaf improve + emotion prefix)
+flutter analyze
 ```

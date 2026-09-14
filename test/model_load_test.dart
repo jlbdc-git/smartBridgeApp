@@ -8,9 +8,11 @@ void main() {
     test('exposes gesture class labels for inference output', () {
       final modelService = ModelService();
       expect(modelService.signLabels, isNotEmpty);
-      expect(modelService.signLabels, contains('Open_Palm'));
-      expect(modelService.signLabels, contains('Closed_Fist'));
-      expect(modelService.signLabels, contains('ILoveYou'));
+      // The shipped Senyas FSL model uses Filipino sign labels (see
+      // assets/models/labels.txt), not the earlier MediaPipe gesture set.
+      expect(modelService.signLabels, contains('kamusta'));
+      expect(modelService.signLabels, contains('salamat'));
+      expect(modelService.signLabels, contains('ako'));
     });
 
     test('reports not loaded before initialization', () {

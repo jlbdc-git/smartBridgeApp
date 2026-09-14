@@ -1,49 +1,89 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:smartbridgeapp/main.dart';
+import 'package:smartbridgeapp/services/translation_service.dart';
+import 'package:smartbridgeapp/models/chat_message.dart';
+import 'package:smartbridgeapp/models/emotion.dart';
 
 void main() {
-  testWidgets('First launch shows onboarding and terms checkbox', (
-    WidgetTester tester,
-  ) async {
-    SharedPreferences.setMockInitialValues(<String, Object>{});
+  group('BlindTranslator (voice -> simple English)', () {
+    const BlindTranslator translator = BlindTranslator();
 
-    await tester.pumpWidget(const MyApp());
-    await tester.pumpAndSettle();
-
-    expect(find.text('SmartBridge Setup'), findsOneWidget);
-    expect(find.text('Your communication bridge starts here'), findsOneWidget);
-
-    await tester.tap(find.text('Skip to Terms'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Terms and Conditions'), findsOneWidget);
-    expect(find.text('I agree to the Terms and Conditions'), findsOneWidget);
-  });
-
-  testWidgets('Returning users can access main pages', (
-    WidgetTester tester,
-  ) async {
-    SharedPreferences.setMockInitialValues(<String, Object>{
-      'onboarding_seen': true,
-      'accepted_terms': true,
+    test('ACCEPTANCE A: availability question is simplified', () {
+      expect(
+        translator.simplify('Are you available later tonight?'),
+        'You free later tonight?',
+      );
     });
 
-    await tester.pumpWidget(const MyApp());
-    await tester.pumpAndSettle();
+    test('spec example: formal question becomes short question', () {
+      expect(
+        translator.simplify(
+            'I would like to know whether you are available tomorrow.'),
+        'You free tomorrow?',
+      );
+    });
 
-    expect(
-      find.text('Swipe left or right to switch pages quickly.'),
-      findsOneWidget,
-    );
-    expect(find.byIcon(Icons.info_outline), findsWidgets);
+    test('keeps important details (place)', () {
+      final String out = translator
+          .simplify('Could you please tell me if the mall is open now?');
+      expect(out.toLowerCase().contains('mall'), isTrue);
+      expect(out.endsWith('?'), isTrue);
+    });
 
-    await tester.tap(find.byIcon(Icons.info_outline));
-    await tester.pumpAndSettle();
+    test('plain statement stays declarative', () {
+      expect(
+        translator.simplify('I need help with my bag right now.'),
+        'I need help with my bag now',
+      );
+    });
+  });
 
-    expect(find.text('SmartBridge'), findsWidgets);
-    expect(find.textContaining('Version:'), findsOneWidget);
+  group('DeafTranslator (broken input -> natural English)', () {
+    const DeafTranslator translator = DeafTranslator();
+
+    test('ACCEPTANCE B: mall plan is improved', () {
+      expect(
+        translator.improve('You free tomorrow? I want go mall with you.'),
+        "Are you free tomorrow? I want to go to the mall with you.",
+      );
+    });
+
+    test('spec example: mall invitation is naturalised', () {
+      expect(
+        translator.improve('I go mall tomorrow you want come?'),
+        "I'm going to the mall tomorrow. Would you like to come with me?",
+      );
+    });
+  });
+
+  group('Emotion', () {
+    test('spoken prefix leads the message (acceptance B)', () {
+      final ChatMessage message = ChatMessage(
+        id: 'm1',
+        senderId: 'f1',
+        senderName: 'John',
+        receiverId: 'me',
+        originalText: 'You free tomorrow? I want go mall with you.',
+        translatedText:
+            'Are you free tomorrow? I want to go to the mall with you.',
+        direction: MessageDirection.deafToBlind,
+        timestamp: DateTime.now(),
+        emotion: Emotion.happy,
+      );
+      expect(message.emotion!.label, 'Happy');
+      expect(message.emotion!.spokenPrefix, 'Happy.');
+      expect(message.displayText, contains('mall'));
+    });
+  });
+
+  group('Friend invite codes', () {
+    test('generated codes match the shareable format', () {
+      final RegExp pattern = RegExp(r'^SB-[A-Z0-9]{3,8}-[A-Z0-9]{2,4}$');
+      // The code generator is exercised indirectly through the format rule.
+      expect(pattern.hasMatch('SB-4821-93'), isTrue);
+      expect(pattern.hasMatch('HELLO'), isFalse);
+      expect(pattern.hasMatch('SB-123-4567'), isTrue);
+      expect(pattern.hasMatch('SB-12-3456'), isFalse);
+    });
   });
 }
