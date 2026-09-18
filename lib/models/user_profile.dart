@@ -16,6 +16,7 @@ class UserProfile {
     required this.id,
     required this.name,
     required this.role,
+    this.remoteId,
   });
 
   /// Random persistent identifier for this device's user.
@@ -24,11 +25,18 @@ class UserProfile {
   final String name;
   final UserRole role;
 
-  UserProfile copyWith({String? name, UserRole? role}) {
+  /// Backend user id (Supabase `auth.uid()`), set only once the optional
+  /// internet backend is configured and signed in. Kept separate from [id] so
+  /// an existing install keeps its friend list and history when the backend
+  /// is switched on later. Null means "local/LAN only".
+  final String? remoteId;
+
+  UserProfile copyWith({String? name, UserRole? role, String? remoteId}) {
     return UserProfile(
       id: id,
       name: name ?? this.name,
       role: role ?? this.role,
+      remoteId: remoteId ?? this.remoteId,
     );
   }
 
@@ -36,6 +44,7 @@ class UserProfile {
         'id': id,
         'name': name,
         'role': role.name,
+        'remoteId': remoteId,
       };
 
   factory UserProfile.fromJson(Map<String, dynamic> json) {
@@ -43,6 +52,7 @@ class UserProfile {
       id: (json['id'] ?? '') as String,
       name: (json['name'] ?? '') as String,
       role: roleFromName(json['role'] as String?),
+      remoteId: json['remoteId'] as String?,
     );
   }
 
@@ -68,6 +78,8 @@ class Friend {
     required this.name,
     required this.role,
     required this.addedAt,
+    this.isSample = false,
+    this.remoteId,
   });
 
   final String id;
@@ -75,20 +87,36 @@ class Friend {
   final UserRole role;
   final DateTime addedAt;
 
-  Friend copyWith({String? name}) {
+  /// True only for the built-in TEST/SAMPLE friend. Always shown with a
+  /// "SAMPLE" marker so it can never be mistaken for a real person.
+  final bool isSample;
+
+  /// The friend's backend user id, when they were connected while both devices
+  /// had the optional internet backend configured. Null means this friend can
+  /// only be reached over the LAN.
+  final String? remoteId;
+
+  Friend copyWith({String? name, String? remoteId}) {
     return Friend(
       id: id,
       name: name ?? this.name,
       role: role,
       addedAt: addedAt,
+      isSample: isSample,
+      remoteId: remoteId ?? this.remoteId,
     );
   }
+
+  /// True when this friend can be reached over the internet.
+  bool get isReachableOnline => remoteId != null && remoteId!.isNotEmpty;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'id': id,
         'name': name,
         'role': role.name,
         'addedAt': addedAt.toIso8601String(),
+        'isSample': isSample,
+        'remoteId': remoteId,
       };
 
   factory Friend.fromJson(Map<String, dynamic> json) {
@@ -98,6 +126,9 @@ class Friend {
       role: roleFromName(json['role'] as String?),
       addedAt: DateTime.tryParse((json['addedAt'] ?? '') as String) ??
           DateTime.now(),
+      // Friends stored by previous versions have no flag: default to false.
+      isSample: (json['isSample'] ?? false) as bool,
+      remoteId: json['remoteId'] as String?,
     );
   }
 

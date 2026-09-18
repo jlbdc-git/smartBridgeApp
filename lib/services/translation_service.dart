@@ -96,6 +96,10 @@ class BlindTranslator {
     'would you mind': 'can you',
     'would it be possible for you to': 'can you',
     'is it possible for you to': 'can you',
+    // Without these, the single-word rule below turned "is it possible to
+    // meet" into "is it can to meet". "can you" keeps the request intact.
+    'would it be possible to': 'can you',
+    'is it possible to': 'can you',
     'are you able to': 'can you',
     'do you think you could': 'can you',
     'i am wondering': 'i want to know',
@@ -241,13 +245,10 @@ class BlindTranslator {
       indirectQuestion = true;
     }
 
-    // 3. Word-level simplification.
-    final List<String> tokens = _tokens(text);
-    if (_hasWord(tokens, 'assistance')) {
-      text = _replacePhrases(text, _words);
-    } else {
-      text = _replacePhrases(text, _words);
-    }
+    // 3. Word-level simplification. (Both branches of a former if/else here
+    //    did exactly the same thing - the condition was left over from an
+    //    earlier revision and had no effect.)
+    text = _replacePhrases(text, _words);
 
     // 4. Drop polite decorations that carry no information.
     text = text.replaceAll(
@@ -386,9 +387,13 @@ class DeafTranslator {
         ),
         (Match m) {
           final String verb = m.group(1)!.toLowerCase();
-          final String stem = verb.endsWith('e') && verb.length > 2
-              ? verb.substring(0, verb.length - 1)
-              : verb;
+          // Verbs ending in "ee" keep it (see -> seeing); other silent-e verbs
+          // drop it (come -> coming). Dropping it after "ee" produced "seing".
+          final String stem = verb.endsWith('ee')
+              ? verb
+              : (verb.endsWith('e') && verb.length > 2
+                  ? verb.substring(0, verb.length - 1)
+                  : verb);
           final String doubling =
               RegExp(r'^(shop|stop|sit|run|swim|get)$').hasMatch(stem)
                   ? stem.substring(stem.length - 1)
@@ -407,9 +412,11 @@ class DeafTranslator {
         (Match m) {
           final String subject = m.group(1)!.toLowerCase();
           final String verb = m.group(2)!.toLowerCase();
-          final String stem = verb.endsWith('e') && verb.length > 2
-              ? verb.substring(0, verb.length - 1)
-              : verb;
+          final String stem = verb.endsWith('ee')
+              ? verb
+              : (verb.endsWith('e') && verb.length > 2
+                  ? verb.substring(0, verb.length - 1)
+                  : verb);
           final String conjugated = subject == 'you' ? "you're" : "$subject're";
           final String ingForm = '$stem' 'ing';
           return '$conjugated $ingForm';

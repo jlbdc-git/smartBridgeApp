@@ -4,6 +4,7 @@ import '../models/ui_preferences.dart';
 import '../models/user_profile.dart';
 import '../services/permission_handler.dart';
 import '../services/session_service.dart';
+import '../widgets/accessibility.dart';
 import 'legacy/settings_screen.dart';
 import 'legacy/sign_translator_screen.dart';
 
@@ -17,10 +18,16 @@ class AppSettingsScreen extends StatefulWidget {
   const AppSettingsScreen({
     super.key,
     required this.session,
+    required this.onBack,
     required this.onPreferencesChanged,
   });
 
   final SessionService session;
+
+  /// Settings is a tab of the shell, not a pushed route, so it provides its
+  /// own way back to the home screen.
+  final VoidCallback onBack;
+
   final ValueChanged<AppUiPreferences> onPreferencesChanged;
 
   @override
@@ -46,13 +53,35 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
 
   SessionService get _session => widget.session;
 
+  Future<void> _addSampleFriend() async {
+    await _session.addSampleFriend();
+    if (!mounted) return;
+    setState(() {});
+    await _session.tts.speakConfirmation(
+      'Sample friend added. Open it from your friend list to test messaging.',
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Sample friend (TEST) added to your friend list'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final AppUiPreferences prefs = _session.ui;
     final UserProfile? profile = _session.profile;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+      appBar: AppBar(
+        title: const Text('Settings'),
+        leading: IconButton(
+          tooltip: 'Back to home',
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: widget.onBack,
+        ),
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -103,17 +132,24 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             children: [
               SwitchListTile.adaptive(
                 contentPadding: EdgeInsets.zero,
-                title: const Text('Text-to-speech confirmations'),
+                title: const Text('Text-to-speech'),
                 subtitle: const Text(
                   'Reads messages and confirmations aloud (blind mode).',
                 ),
-                value: _session.notificationsEnabled,
-                onChanged: (bool value) {
-                  _session.setNotificationsEnabled(value);
+                value: _session.ttsEnabled,
+                onChanged: (bool value) async {
+                  await _session.setTtsEnabled(value);
+                  if (!mounted) return;
                   setState(() {});
+                  // Immediate audible feedback that the switch took effect.
+                  await _session.tts.speakConfirmation(
+                    value
+                        ? 'Text to speech on.'
+                        : 'Text to speech off.',
+                  );
                 },
               ),
-              _LabeledSlider(
+              LabeledSlider(
                 label: 'Speech rate',
                 value: prefs.ttsRate,
                 min: 0.1,
@@ -124,7 +160,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                   prefs.copyWith(ttsRate: value),
                 ),
               ),
-              _LabeledSlider(
+              LabeledSlider(
                 label: 'Voice pitch',
                 value: prefs.ttsPitch,
                 min: 0.5,
@@ -135,7 +171,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                   prefs.copyWith(ttsPitch: value),
                 ),
               ),
-              _LabeledSlider(
+              LabeledSlider(
                 label: 'Voice volume',
                 value: prefs.ttsVolume,
                 min: 0.0,
@@ -195,7 +231,40 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           _Section(
             title: 'Accessibility',
             children: [
-              _LabeledSlider(
+              Text(
+                'Theme',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              SegmentedButton<ThemeMode>(
+                segments: const [
+                  ButtonSegment<ThemeMode>(
+                    value: ThemeMode.system,
+                    icon: Icon(Icons.brightness_auto_rounded),
+                    label: Text('System'),
+                  ),
+                  ButtonSegment<ThemeMode>(
+                    value: ThemeMode.light,
+                    icon: Icon(Icons.light_mode_rounded),
+                    label: Text('Light'),
+                  ),
+                  ButtonSegment<ThemeMode>(
+                    value: ThemeMode.dark,
+                    icon: Icon(Icons.dark_mode_rounded),
+                    label: Text('Dark'),
+                  ),
+                ],
+                selected: <ThemeMode>{prefs.themeMode},
+                onSelectionChanged: (Set<ThemeMode> selection) =>
+                    widget.onPreferencesChanged(
+                  prefs.copyWith(themeMode: selection.first),
+                ),
+              ),
+              const SizedBox(height: 16),
+              LabeledSlider(
                 label: 'Font size',
                 value: prefs.textScale,
                 min: 0.85,
@@ -261,15 +330,75 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 subtitle: const Text(
                   'Thresholds, frame stride and voice output for sign tools.',
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (BuildContext context) => LegacySettingsScreen(
-                      prefs: _session.ui,
-                      onPreferencesChanged: widget.onPreferencesChanged,
-                      onClearHistory: () {},
+                trailing: const Icon(Icons.chevron_right),                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (BuildContext context) => LegacySettingsScreen(
+                        prefs: _session.ui,
+                        onPreferencesChanged: widget.onPreferencesChanged,
+                        // No onClearHistory: the messaging app keeps no sign
+                        // history, so the button is hidden rather than shown
+                        // and doing nothing.
+                      ),
                     ),
                   ),
+              ),
+            ],
+          ),
+          // ---------------- Testing ----------------
+          _Section(
+            title: 'Testing',
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.science_rounded),
+                title: const Text('Sample friend (TEST)'),
+                subtitle: Text(
+                  _session.chatService.sampleFriend.isInstalled
+                      ? 'The built-in test contact is in your friend list. '
+                          'Messages you send are answered automatically.'
+                      : 'Add a built-in test contact so you can try chatting, '
+                          'translation and emotion without a second phone.',
+                ),
+                trailing: _session.chatService.sampleFriend.isInstalled
+                    ? const Icon(Icons.check_circle_rounded)
+                    : FilledButton(
+                        onPressed: _addSampleFriend,
+                        child: const Text('Add'),
+                      ),
+              ),
+              const ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.info_outline_rounded),
+                title: Text('Not a real person'),
+                subtitle: Text(
+                  'The sample friend only exists on this device. Nothing is '
+                  'sent over the network, and no real contact details are '
+                  'involved. Remove it any time from My friends.',
+                ),
+              ),
+            ],
+          ),
+          // ---------------- Connection ----------------
+          _Section(
+            title: 'Connection',
+            children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  _session.internetMessagingAvailable
+                      ? Icons.public_rounded
+                      : Icons.wifi_rounded,
+                ),
+                title: const Text('Internet messaging'),
+                subtitle: Text(
+                  _session.internetMessagingAvailable
+                      ? 'Status: ${_session.backendStatusLabel}. Friends you '
+                          'connect with while this is on can be reached from '
+                          'any network, not only the same Wi-Fi.'
+                      : 'Status: ${_session.backendStatusLabel}. Friends are '
+                          'reachable while both phones are on the same Wi-Fi. '
+                          'Chat, translation and all settings still work '
+                          'offline.',
                 ),
               ),
             ],
@@ -278,6 +407,19 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           _Section(
             title: 'Privacy',
             children: [
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.info_outline_rounded),
+                title: const Text('About SmartBridge Messages'),
+                subtitle: const Text(
+                  'What the app is, how your data is handled and which '
+                  'permissions it uses.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                // The route existed but nothing ever opened it, so the about
+                // page was unreachable.
+                onTap: () => Navigator.of(context).pushNamed('/about'),
+              ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.delete_sweep_rounded),
@@ -327,14 +469,16 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 trailing: const Icon(Icons.chevron_right),
                 onTap: () => Navigator.of(context).pushNamed('/friends'),
               ),
-              const ListTile(
+              ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.lock_outline_rounded),
-                title: Text('Private by design'),
+                leading: const Icon(Icons.lock_outline_rounded),
+                title: const Text('Private by design'),
                 subtitle: Text(
-                  'No public directory, no search, no analytics. Messages '
-                  'stay on your device and travel only over your local '
-                  'Wi-Fi. Codes expire after 30 minutes.',
+                  'No public directory, no search, no profiling. Messages are '
+                  'stored on your device; they are delivered directly over '
+                  'your local Wi-Fi'
+                  '${_session.internetMessagingAvailable ? ', or through the encrypted backend when the two phones are on different networks' : ''}'
+                  '. Codes expire after 30 minutes.',
                 ),
               ),
             ],
@@ -345,7 +489,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     );
   }
 }
-
 class _Section extends StatelessWidget {
   const _Section({required this.title, required this.children});
 
@@ -377,45 +520,8 @@ class _Section extends StatelessWidget {
   }
 }
 
-class _LabeledSlider extends StatelessWidget {
-  const _LabeledSlider({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.divisions,
-    required this.valueLabel,
-    required this.onChanged,
-  });
 
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final int divisions;
-  final String valueLabel;
-  final ValueChanged<double> onChanged;
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(child: Text(label)),
-            Text(valueLabel),
-          ],
-        ),
-        Slider(
-          value: value,
-          min: min,
-          max: max,
-          divisions: divisions,
-          label: valueLabel,
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
-}
+
+
+

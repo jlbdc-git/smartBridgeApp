@@ -111,20 +111,31 @@ class _MyAppState extends State<MyApp> {
 
     // Minimalistic, high-contrast theme: cleaner surfaces, larger tappables,
     // subtle rounded corners, and reduced chrome to avoid a technical look.
-    final Color primary = brightness == Brightness.dark
-        ? const Color(0xFF6AF6ED)
-        : const Color(0xFF006F69);
-
+    //
+    // NOTE: everything below reads from [scheme]. An earlier version built this
+    // scheme (including the high-contrast overrides) and then passed a fresh
+    // `ColorScheme.fromSeed(...)` to ThemeData, which silently threw all of it
+    // away - the high-contrast switch had no visible effect at all.
     return ThemeData(
       useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(seedColor: _seedColor, brightness: brightness),
+      colorScheme: scheme,
       textTheme: appTextTheme,
-      scaffoldBackgroundColor: brightness == Brightness.dark ? const Color(0xFF0B0B0C) : Colors.white,
+      scaffoldBackgroundColor: scheme.surface,
+      // Reduce motion is applied to navigation too, not just to widgets that
+      // happen to check MediaQuery.disableAnimations.
+      pageTransitionsTheme: PageTransitionsTheme(
+        builders: <TargetPlatform, PageTransitionsBuilder>{
+          for (final TargetPlatform platform in TargetPlatform.values)
+            platform: _prefs.reduceMotion
+                ? const _NoAnimationPageTransitionsBuilder()
+                : const ZoomPageTransitionsBuilder(),
+        },
+      ),
       appBarTheme: AppBarTheme(
         elevation: 0,
         centerTitle: true,
         backgroundColor: Colors.transparent,
-        foregroundColor: brightness == Brightness.dark ? Colors.white : Colors.black,
+        foregroundColor: scheme.onSurface,
         titleTextStyle: appTextTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
         toolbarHeight: 64,
       ),
@@ -136,17 +147,19 @@ class _MyAppState extends State<MyApp> {
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           elevation: 0,
-          backgroundColor: primary,
-          foregroundColor: Colors.white,
+          // scheme.onPrimary, not a hard-coded white: in dark mode the primary
+          // colour is light cyan, where white text would be unreadable.
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
           padding: const EdgeInsets.symmetric(vertical: 14.0, horizontal: 20.0),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           textStyle: appTextTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600),
         ),
       ),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(foregroundColor: primary),
+        style: TextButton.styleFrom(foregroundColor: scheme.primary),
       ),
-      iconTheme: IconThemeData(color: brightness == Brightness.dark ? Colors.white : Colors.black, size: 22),
+      iconTheme: IconThemeData(color: scheme.onSurface, size: 22),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: brightness == Brightness.dark ? const Color(0xFF121315) : const Color(0xFFF3F4F6),
@@ -169,6 +182,9 @@ class _MyAppState extends State<MyApp> {
         return MediaQuery(
           data: mediaQuery.copyWith(
             textScaler: TextScaler.linear(_prefs.textScale),
+            // Honours the "Reduce motion" switch for every widget that checks
+            // it, without touching MaterialApp-level transitions.
+            disableAnimations: _prefs.reduceMotion,
           ),
           child: child ?? const SizedBox.shrink(),
         );
@@ -180,6 +196,23 @@ class _MyAppState extends State<MyApp> {
   }
 }
 
+
+/// Navigation transition with no animation, used when "Reduce motion" is on.
+/// Chosen over simply shortening the duration because a zero-length animation
+/// still rebuilds every frame of the route transition.
+class _NoAnimationPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _NoAnimationPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) =>
+      child;
+}
 
 /// Simple loading splash (kept from the original main.dart).
 class _LoadingScaffold extends StatelessWidget {

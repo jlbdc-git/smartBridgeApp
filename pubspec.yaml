@@ -9,7 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  cupertino_icons: ^1.0.9
   camera: ^0.11.3
   hand_landmarker: ^2.2.0
   google_mlkit_pose_detection: ^0.14.1
@@ -19,13 +18,19 @@ dependencies:
   google_fonts: ^6.3.3
   shared_preferences: ^2.5.5
   package_info_plus: ^8.0.2
-  path_provider: ^2.1.5
   qr_flutter: ^4.1.0
   mobile_scanner: ^7.0.0
   connectivity_plus: ^6.1.5
+  # Optional internet transport (long-distance messaging). Inert unless
+  # SUPABASE_URL / SUPABASE_ANON_KEY are supplied with --dart-define at build
+  # time; the app is fully usable without them. See supabase/README.md.
+  supabase_flutter: ^2.17.2
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  # On-device end-to-end tests (run with `flutter test integration_test -d <device>`).
+  integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.4

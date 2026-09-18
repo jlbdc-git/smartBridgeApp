@@ -197,7 +197,8 @@ class _EmotionChoice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color color = emotion.color;
+    // Theme-aware palette, otherwise the label is unreadable on a dark surface.
+    final Color color = emotion.colorFor(Theme.of(context).brightness);
     return ChoiceChip(
       avatar: Icon(emotion.icon, color: color, size: 26),
       label: Text(

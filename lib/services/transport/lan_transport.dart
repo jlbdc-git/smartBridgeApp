@@ -13,7 +13,21 @@ import 'package:flutter/foundation.dart';
 ///
 /// If Wi-Fi/LAN is unavailable the app still works: messages are stored
 /// locally and marked as pending until the transport can deliver them.
-class LanTransport {
+///
+/// The chat layer depends on this interface, not the concrete class, so the
+/// delivery logic can be unit-tested without real sockets.
+abstract interface class ChatTransport {
+  /// Events: {'type': 'announce'|'chat', ...payload}
+  Stream<Map<String, dynamic>> get events;
+
+  /// Updates the announce identity (e.g. after the profile changed).
+  void updateIdentity(Map<String, dynamic> identity);
+
+  /// Best-effort direct delivery to a known friend address.
+  Future<bool> sendToFriend(String friendId, Map<String, dynamic> payload);
+}
+
+class LanTransport implements ChatTransport {
   static const int udpPort = 45123;
   static const int tcpPort = 45124;
   static const Duration announceInterval = Duration(seconds: 3);
@@ -32,7 +46,7 @@ class LanTransport {
   final StreamController<Map<String, dynamic>> _events =
       StreamController<Map<String, dynamic>>.broadcast();
 
-  /// Events: {'type': 'announce'|'chat', ...payload}
+  @override
   Stream<Map<String, dynamic>> get events => _events.stream;
 
   bool get isRunning => _running;
@@ -97,6 +111,7 @@ class LanTransport {
   }
 
   /// Updates the announce identity (e.g. after the profile changed).
+  @override
   void updateIdentity(Map<String, dynamic> identity) {
     _identity = identity;
     _announce();
@@ -161,6 +176,7 @@ class LanTransport {
   }
 
   /// Best-effort direct delivery to a known friend address.
+  @override
   Future<bool> sendToFriend(String friendId, Map<String, dynamic> payload) {
     final String? address = _addresses[friendId];
     if (address == null) return Future<bool>.value(false);

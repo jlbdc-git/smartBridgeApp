@@ -16,31 +16,37 @@ class EmotionBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color color = emotion.color;
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 8 : 10,
-        vertical: compact ? 3 : 5,
-      ),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.55)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(emotion.icon, size: compact ? 14 : 17, color: color),
-          const SizedBox(width: 4),
-          Text(
-            emotion.label,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.w800,
-              fontSize: compact ? 11 : 13,
+    // Theme-aware: the palette is only readable on a light background.
+    final Color color = emotion.colorFor(Theme.of(context).brightness);
+    return Semantics(
+      // One clean announcement instead of "Happy Happy" (icon + label).
+      label: 'Emotion ${emotion.label}',
+      excludeSemantics: true,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 8 : 10,
+          vertical: compact ? 3 : 5,
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: color.withValues(alpha: 0.55)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(emotion.icon, size: compact ? 14 : 17, color: color),
+            const SizedBox(width: 4),
+            Text(
+              emotion.label,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w800,
+                fontSize: compact ? 11 : 13,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -7,9 +7,11 @@ import '../models/chat_message.dart';
 import '../models/emotion.dart';
 import '../models/user_profile.dart';
 import '../services/session_service.dart';
+import '../services/translation_service.dart';
 import '../widgets/accessibility.dart';
 import '../widgets/emotion_badge.dart';
 import '../widgets/message_bubble.dart';
+import 'blind_translator_screen.dart';
 import 'deaf_translator_screen.dart';
 
 /// One-to-one chat between confirmed friends.
@@ -32,7 +34,6 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scroll = ScrollController();
   StreamSubscription<ChatMessage>? _incomingSub;
   StreamSubscription<String>? _outboxSub;
-  Timer? _readTicker;
 
   Emotion? _selectedEmotion;
   bool _isSpeakingNow = false;
@@ -56,7 +57,18 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    // Tell the shell this conversation is on screen so it stops notifying
+    // about messages the user is already looking at.
+    widget.session.openChatFriendId = widget.friendId;
+
+    // Was anything actually waiting when this conversation was opened? Read it
+    // BEFORE marking the thread read, otherwise the answer depends on whether
+    // the async write happened to finish first and the spoken greeting would
+    // appear only sometimes.
+    final bool hadUnread = _messages.any((ChatMessage m) =>
+        m.senderId == widget.friendId && !m.readByReceiver);
     widget.session.chatService.markConversationRead(widget.friendId);
+
     _incomingSub = widget.session.chatService.incomingMessages.listen(
       _onIncoming,
     );
@@ -65,48 +77,38 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_blindMode) {
-        _announceNewMessages();
-        _readTicker = Timer.periodic(
-          const Duration(seconds: 2),
-          (Timer _) => _checkUnread(),
-        );
-      }
+      if (!mounted) return;
+      // The "new message" banner is stale once this conversation is on
+      // screen, and it would sit on top of the composer. Clear it.
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      // Speak the message that was waiting, once."Happy. I'm really glad you
+      // came today."
+      if (_blindMode && hadUnread) _speakLastReceived();
     });
   }
 
-  /// Speaks unread messages once when the chat opens ("New message from
-  /// John. Happy. I'm really glad you came today.")
-  Future<void> _announceNewMessages() async {
-    final List<ChatMessage> unread = _messages
-        .where((ChatMessage m) =>
-            m.senderId == widget.friendId && !m.readByReceiver)
+  /// Speaks the newest received message, emotion first.
+  Future<void> _speakLastReceived() async {
+    final List<ChatMessage> received = _messages
+        .where((ChatMessage m) => m.senderId == widget.friendId)
         .toList();
-    if (unread.isEmpty) return;
-    await widget.session.chatService.speakReceived(unread.last);
-  }
-
-  /// While the chat is open and blind mode is on, announce anything that
-  /// arrives (the shell-level announcement is suppressed for the open chat).
-  Future<void> _checkUnread() async {
-    final List<ChatMessage> unread = _messages
-        .where((ChatMessage m) =>
-            m.senderId == widget.friendId && !m.readByReceiver)
-        .toList();
-    if (unread.isEmpty) return;
-    await widget.session.chatService.markConversationRead(widget.friendId);
-    await widget.session.chatService.speakReceived(unread.last);
+    if (received.isEmpty) return;
+    await widget.session.chatService.speakReceived(received.last);
   }
 
   void _onIncoming(ChatMessage message) {
     if (message.senderId != widget.friendId) return;
     if (mounted) setState(() {});
     _scrollToBottom();
+
     if (_blindMode) {
+      // The user is listening to this conversation right now: mark it read
+      // here as well, otherwise the shell's unread badge stays lit.
+      widget.session.chatService.markConversationRead(widget.friendId);
       // Auto-read incoming messages with emotion, e.g.
       // "Happy. I'm really glad you came today."
       widget.session.chatService.speakReceived(message);
-    } else {
+    } else if (widget.session.shouldVibrateOnIncoming) {
       HapticFeedback.mediumImpact();
     }
   }
@@ -165,8 +167,25 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _isSpeakingNow = false);
   }
 
-  // ---------------- Sending (deaf composer) ----------------
+  // ---------------- Sending ----------------
 
+  /// Blind composer: opens the voice pipeline (Voice -> STT -> simple English
+  /// -> Preview -> Send). It performs the send itself, so there is nothing to
+  /// do here afterwards except refresh.
+  Future<void> _openBlindTranslator() async {
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      builder: (BuildContext context) => BlindTranslatorScreen(
+        session: widget.session,
+        friendName: _friend.name,
+        friendId: widget.friendId,
+      ),
+    ));
+    if (mounted) setState(() {});
+    _scrollToBottom();
+  }
+
+  /// Deaf composer: opens the typing pipeline (Typed -> natural English ->
+  /// Emotion -> Preview -> Send) and sends whatever comes back.
   Future<void> _openDeafTranslator() async {
     final ChatMessage? draft = await Navigator.of(context)
         .push<ChatMessage>(MaterialPageRoute<ChatMessage>(
@@ -191,26 +210,50 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _sendQuick(String text) async {
-    if (text.trim().isEmpty) return;
-    await widget.session.chatService.sendMessage(
+    final String original = text.trim();
+    if (original.isEmpty) return;
+
+    // Whatever way a blind user composes, the outgoing message is simplified
+    // so the deaf recipient always gets the short form.
+    final String outgoing =
+        _blindMode ? const BlindTranslator().simplify(original) : original;
+
+    final ChatMessage sent = await widget.session.chatService.sendMessage(
       friend: _friend,
-      originalText: text.trim(),
-      translatedText: text.trim(),
-      direction: widget.session.profile?.role == UserRole.blind
+      originalText: original,
+      translatedText: outgoing,
+      direction: _blindMode
           ? MessageDirection.blindToDeaf
           : MessageDirection.deafToBlind,
-      emotion: _selectedEmotion,
+      emotion: _blindMode ? null : _selectedEmotion,
     );
     _composer.clear();
-    setState(() {});
+    if (!mounted) return;
+    // The emotion belongs to ONE message. Leaving it selected silently stamped
+    // the same feeling on the next message too, which is exactly the kind of
+    // "the app decided how I feel" behaviour the spec forbids.
+    if (_selectedEmotion != null) {
+      setState(() => _selectedEmotion = null);
+    }
+    if (_blindMode) {
+      await widget.session.tts.speakConfirmation(
+        sent.status == MessageStatus.sent
+            ? 'Message sent.'
+            : "You're offline. Messages will be synchronized when connection "
+                'is restored.',
+      );
+    }
+    if (mounted) setState(() {});
     _scrollToBottom();
   }
 
   @override
   void dispose() {
+    if (widget.session.openChatFriendId == widget.friendId) {
+      widget.session.openChatFriendId = null;
+    }
     _incomingSub?.cancel();
     _outboxSub?.cancel();
-    _readTicker?.cancel();
     _composer.dispose();
     _scroll.dispose();
     super.dispose();
@@ -226,11 +269,15 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            CircleAvatar(child: Text(_friend.name[0].toUpperCase())),
+            CircleAvatar(
+              child: Text(
+                _friend.name.isNotEmpty ? _friend.name[0].toUpperCase() : '?',
+              ),
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                _friend.name,
+                _friend.isSample ? '${_friend.name} - SAMPLE' : _friend.name,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w800),
               ),
@@ -368,24 +415,34 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Big translate-and-send button.
+                  // Big translate-and-send button. Blind users get the voice
+                  // pipeline, deaf users get the text pipeline.
                   IconButton.filled(
                     onPressed: () async {
                       if (blind) {
                         await widget.session.tts
-                            .speakConfirmation('Opening translator.');
+                            .speakConfirmation('Opening voice message.');
                       }
                       if (!context.mounted) return;
-                      await _openDeafTranslator();
+                      await (blind
+                          ? _openBlindTranslator()
+                          : _openDeafTranslator());
                     },
-                    icon: const Icon(Icons.auto_fix_high_rounded, size: 26),
-                    tooltip: 'Write with translator',
+                    icon: Icon(
+                      blind
+                          ? Icons.mic_rounded
+                          : Icons.auto_fix_high_rounded,
+                      size: 26,
+                    ),
+                    tooltip: blind
+                        ? 'Record a voice message'
+                        : 'Write with translator',
                   ),
                   const SizedBox(width: 4),
                   IconButton.filled(
                     onPressed: () => _sendQuick(_composer.text),
                     icon: const Icon(Icons.send_rounded, size: 24),
-                    tooltip: 'Send as typed',
+                    tooltip: blind ? 'Send typed message' : 'Send as typed',
                   ),
                 ],
               ),

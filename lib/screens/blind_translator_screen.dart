@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/chat_message.dart';
 import '../models/user_profile.dart';
+import '../services/permission_handler.dart';
 import '../services/session_service.dart';
 import '../services/stt_service.dart';
 import '../services/translation_service.dart';
@@ -59,7 +60,10 @@ class _BlindTranslatorScreenState extends State<BlindTranslatorScreen> {
       return;
     }
 
-    HapticFeedback.mediumImpact();
+    // Tactile cue that recording started - only when the user enabled haptics.
+    if (widget.session.ui.hapticsEnabled) {
+      HapticFeedback.mediumImpact();
+    }
     setState(() => _listening = true);
 
     final bool started = await _stt.start(
@@ -89,11 +93,21 @@ class _BlindTranslatorScreenState extends State<BlindTranslatorScreen> {
         if (!mounted) return;
         setState(() => _listening = false);
         widget.session.tts.speakConfirmation(message);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message)),
-          );
-        }
+        // Spec 13: a denied microphone always offers a way to grant it.
+        final bool isPermissionError =
+            message.toLowerCase().contains('permission');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            duration: const Duration(seconds: 8),
+            action: isPermissionError
+                ? SnackBarAction(
+                    label: 'Open settings',
+                    onPressed: PermissionHandler.openAppSettingsPage,
+                  )
+                : null,
+          ),
+        );
       },
     );
 
@@ -125,15 +139,27 @@ class _BlindTranslatorScreenState extends State<BlindTranslatorScreen> {
       return;
     }
 
-    await widget.session.chatService.sendMessage(
+    final ChatMessage sent = await widget.session.chatService.sendMessage(
       friend: friend,
       originalText: _transcript,
       translatedText: _simplified,
       direction: MessageDirection.blindToDeaf,
+      // A blind message originates from speech, so the speech-to-text result is
+      // recorded as the transcription as well (spec: voice messages carry both
+      // the transcription and any audio path).
+      transcription: _transcript.trim().isEmpty ? null : _transcript.trim(),
     );
 
+    if (!mounted) return;
     setState(() => _sending = false);
-    await widget.session.tts.speakConfirmation('Message sent.');
+
+    // Honest confirmation: only claim delivery when it actually went out.
+    await widget.session.tts.speakConfirmation(
+      sent.status == MessageStatus.sent
+          ? 'Message sent.'
+          : "You're offline. Messages will be synchronized when connection "
+              'is restored.',
+    );
 
     if (!mounted) return;
     Navigator.of(context).pop();
@@ -167,34 +193,48 @@ class _BlindTranslatorScreenState extends State<BlindTranslatorScreen> {
           children: [
             // ---------------- Big microphone button ----------------
             Center(
-              child: GestureDetector(
+              // The biggest control on the screen for a blind user must be a
+              // labelled button for a screen reader. A bare GestureDetector
+              // exposed an unnamed tappable circle, and with
+              // excludeSemantics the tap action has to be re-published here.
+              child: Semantics(
+                button: true,
+                label: _listening
+                    ? 'Stop listening'
+                    : 'Start speaking your message',
+                excludeSemantics: true,
                 onTap: _toggleListening,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 140,
-                  height: 140,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: _listening
-                        ? scheme.errorContainer
-                        : scheme.primaryContainer,
-                    border: Border.all(
-                      color: _listening ? scheme.error : scheme.primary,
-                      width: 3,
+                child: GestureDetector(
+                  onTap: _toggleListening,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 140,
+                    height: 140,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _listening
+                          ? scheme.errorContainer
+                          : scheme.primaryContainer,
+                      border: Border.all(
+                        color: _listening ? scheme.error : scheme.primary,
+                        width: 3,
+                      ),
                     ),
-                  ),
-                  child: Icon(
-                    _listening ? Icons.stop_rounded : Icons.mic_rounded,
-                    size: 62,
-                    color: _listening ? scheme.error : scheme.primary,
+                    child: Icon(
+                      _listening ? Icons.stop_rounded : Icons.mic_rounded,
+                      size: 62,
+                      color: _listening ? scheme.error : scheme.primary,
+                    ),
                   ),
                 ),
               ),
             ),
             const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Center(
               child: Text(
                 _listening ? 'Listening... tap to stop' : 'Tap to speak',
+                textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,

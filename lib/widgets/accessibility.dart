@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 
 /// Big rounded tappable button used everywhere in blind mode.
-/// Minimum height 64 dp for comfortable touch targets.
+///
+/// Minimum height 68 dp for comfortable touch targets, but it is a MINIMUM and
+/// not a fixed size: the label wraps and the button grows.
+///
+/// It used to sit in a fixed 68 dp box with `TextOverflow.ellipsis`, so at the
+/// larger text sizes this app exists to provide, the label was silently cut
+/// off ("Speak, check the simplifie…") instead of wrapping. A blind user's
+/// button label must never be truncated.
 class BigButton extends StatelessWidget {
   const BigButton({
     super.key,
@@ -28,15 +35,24 @@ class BigButton extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: label,
+      enabled: onPressed != null,
+      // A screen reader announces this ONE string. Without excludeSemantics the
+      // icon and both lines were read separately, repeating the label.
+      label: subtext == null ? label : '$label. $subtext',
+      excludeSemantics: true,
+      // CRITICAL: excludeSemantics drops the button's own semantics, so its
+      // tap action has to be re-published here or a screen-reader user can no
+      // longer activate the control at all.
+      onTap: onPressed,
       child: SizedBox(
         width: double.infinity,
-        height: 68,
         child: FilledButton.icon(
           onPressed: onPressed,
           style: FilledButton.styleFrom(
             backgroundColor: bg,
             foregroundColor: fg,
+            minimumSize: const Size.fromHeight(68),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(18),
             ),
@@ -47,15 +63,20 @@ class BigButton extends StatelessWidget {
           ),
           icon: Icon(icon, size: 28),
           label: Column(
+            mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, overflow: TextOverflow.ellipsis),
+              // No ellipsis and no maxLines: a blind user's label must never be
+              // cut off. The button grows instead.
+              Text(label),
               if (subtext != null)
                 Text(
                   subtext!,
-                  style: TextStyle(fontSize: 12.5, color: fg.withValues(alpha: 0.85)),
-                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: fg.withValues(alpha: 0.85),
+                  ),
                 ),
             ],
           ),
@@ -162,6 +183,58 @@ class PreviewCard extends StatelessWidget {
                   fontWeight: FontWeight.w800,
                   height: 1.35,
                 ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Labelled slider with a live value read-out.
+///
+/// Shared by the messaging settings and the sign-tool settings. Both screens
+/// used to carry their own private copy, which is how they drifted apart.
+class LabeledSlider extends StatelessWidget {
+  const LabeledSlider({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.valueLabel,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+  final String valueLabel;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: label,
+      value: valueLabel,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(label)),
+              Text(valueLabel),
+            ],
+          ),
+          Slider(
+            value: value,
+            min: min,
+            max: max,
+            divisions: divisions,
+            label: valueLabel,
+            onChanged: onChanged,
           ),
         ],
       ),

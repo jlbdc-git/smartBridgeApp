@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/ui_preferences.dart';
 import '../../services/permission_handler.dart';
+import '../../widgets/accessibility.dart';
 
 /// Original settings page (extracted unchanged).
 class SettingsPage extends StatelessWidget {
@@ -9,12 +10,16 @@ class SettingsPage extends StatelessWidget {
     super.key,
     required this.prefs,
     required this.onPreferencesChanged,
-    required this.onClearHistory,
+    this.onClearHistory,
   });
 
   final AppUiPreferences prefs;
   final ValueChanged<AppUiPreferences> onPreferencesChanged;
-  final VoidCallback onClearHistory;
+
+  /// Null when the host app does not keep a translation history. The button is
+  /// then hidden: a control that silently does nothing is worse than no
+  /// control at all (the messaging app passes null).
+  final VoidCallback? onClearHistory;
 
   String _themeModeLabel(ThemeMode mode) {
     switch (mode) {
@@ -113,7 +118,7 @@ class SettingsPage extends StatelessWidget {
                   },
                 ),
                 const SizedBox(height: 10),
-                _LabeledSlider(
+                LabeledSlider(
                   label: 'Text size',
                   value: prefs.textScale,
                   min: 0.85,
@@ -175,7 +180,7 @@ class SettingsPage extends StatelessWidget {
                     ),
                   ],
                 ),
-                _LabeledSlider(
+                LabeledSlider(
                   label: 'Recognition threshold',
                   value: prefs.recognitionThreshold,
                   min: 10,
@@ -186,7 +191,7 @@ class SettingsPage extends StatelessWidget {
                     onPreferencesChanged(prefs.copyWith(recognitionThreshold: value));
                   },
                 ),
-                _LabeledSlider(
+                LabeledSlider(
                   label: 'History confidence',
                   value: prefs.historyConfidenceThreshold,
                   min: 35,
@@ -197,7 +202,7 @@ class SettingsPage extends StatelessWidget {
                     onPreferencesChanged(prefs.copyWith(historyConfidenceThreshold: value));
                   },
                 ),
-                _LabeledSlider(
+                LabeledSlider(
                   label: 'Frame stride',
                   value: prefs.frameStride.toDouble(),
                   min: 1,
@@ -210,7 +215,7 @@ class SettingsPage extends StatelessWidget {
                     );
                   },
                 ),
-                _LabeledSlider(
+                LabeledSlider(
                   label: 'Voice speed',
                   value: prefs.ttsRate,
                   min: 0.1,
@@ -221,7 +226,7 @@ class SettingsPage extends StatelessWidget {
                     onPreferencesChanged(prefs.copyWith(ttsRate: value));
                   },
                 ),
-                _LabeledSlider(
+                LabeledSlider(
                   label: 'Voice pitch',
                   value: prefs.ttsPitch,
                   min: 0.5,
@@ -232,7 +237,7 @@ class SettingsPage extends StatelessWidget {
                     onPreferencesChanged(prefs.copyWith(ttsPitch: value));
                   },
                 ),
-                _LabeledSlider(
+                LabeledSlider(
                   label: 'Voice volume',
                   value: prefs.ttsVolume,
                   min: 0.0,
@@ -261,58 +266,16 @@ class SettingsPage extends StatelessWidget {
                   ),
                   onTap: PermissionHandler.openAppSettingsPage,
                 ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.delete_sweep_outlined),
-                  title: const Text('Clear translation history'),
-                  onTap: onClearHistory,
-                ),
+                if (onClearHistory != null)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.delete_sweep_outlined),
+                    title: const Text('Clear translation history'),
+                    onTap: onClearHistory,
+                  ),
               ],
             ),
           ),
-        ),
-      ],
-    );
-  }
-}
-
-class _LabeledSlider extends StatelessWidget {
-  const _LabeledSlider({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.divisions,
-    required this.valueLabel,
-    required this.onChanged,
-  });
-
-  final String label;
-  final double value;
-  final double min;
-  final double max;
-  final int divisions;
-  final String valueLabel;
-  final ValueChanged<double> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(child: Text(label)),
-            Text(valueLabel),
-          ],
-        ),
-        Slider(
-          value: value,
-          min: min,
-          max: max,
-          divisions: divisions,
-          label: valueLabel,
-          onChanged: onChanged,
         ),
       ],
     );
@@ -327,12 +290,12 @@ class LegacySettingsScreen extends StatelessWidget {
     super.key,
     required this.prefs,
     required this.onPreferencesChanged,
-    required this.onClearHistory,
+    this.onClearHistory,
   });
 
   final AppUiPreferences prefs;
   final ValueChanged<AppUiPreferences> onPreferencesChanged;
-  final VoidCallback onClearHistory;
+  final VoidCallback? onClearHistory;
 
   @override
   Widget build(BuildContext context) {

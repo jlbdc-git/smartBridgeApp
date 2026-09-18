@@ -28,6 +28,10 @@ class FriendService {
   final LocalDatabase database;
   final SharedPreferences prefs;
 
+  /// Called whenever a (new) invite code is issued, so the owner can push it
+  /// into the LAN announce and start resolving typed-code connections.
+  void Function(String code)? onInviteChanged;
+
   static const String _kInviteCode = 'sb_invite_code';
   static const String _kInviteIssuedAt = 'sb_invite_issued_at';
   static const String _kPendingConfirmation = 'sb_pending_confirmation';
@@ -56,6 +60,7 @@ class FriendService {
     final String code = _generateCode();
     prefs.setString(_kInviteCode, code);
     prefs.setString(_kInviteIssuedAt, DateTime.now().toIso8601String());
+    onInviteChanged?.call(code);
     return code;
   }
 
@@ -72,31 +77,69 @@ class FriendService {
   }
 
   /// QR payload: compact JSON with the minimum needed to connect.
-  /// Contains: app tag, code, display name, role, user id. Nothing else.
-  String buildInviteQrPayload(UserProfile me, String code) {
+  /// Contains: app tag, code, display name, role, user id, the issue time (so
+  /// a saved/screenshotted code can be recognised as expired) and, ONLY when
+  /// the optional internet backend is configured, the backend user id so the
+  /// two devices can also reach each other from different networks.
+  /// No contact details, no phone number, no email - nothing else.
+  String buildInviteQrPayload(
+    UserProfile me,
+    String code, {
+    DateTime? issuedAt,
+  }) {
     return jsonEncode(<String, dynamic>{
       'app': 'smartbridge',
       'code': code,
       'name': me.name,
       'role': me.role.name,
       'id': me.id,
+      // Absent (not empty) when there is no backend, so older builds and
+      // LAN-only installs see exactly the payload they always did.
+      if (me.remoteId != null && me.remoteId!.isNotEmpty) 'uid': me.remoteId,
+      // Same clock as the on-screen countdown, so both agree.
+      'iat': (issuedAt ?? DateTime.now()).toIso8601String(),
     });
+  }
+
+  /// When the code currently on screen was issued (drives the QR payload
+  /// timestamp so the countdown and the payload cannot drift apart).
+  DateTime? inviteIssuedAt() {
+    final String? issuedRaw = prefs.getString(_kInviteIssuedAt);
+    return issuedRaw == null ? null : DateTime.tryParse(issuedRaw);
+  }
+
+  /// The stored invite code, if any (used in LAN announces). It may be older
+  /// than the TTL: announces use it only so a peer who connected with a typed
+  /// code can match this device to the real user id. It never creates one.
+  String? storedInviteCode() {
+    final String? code = prefs.getString(_kInviteCode);
+    return (code == null || code.isEmpty) ? null : code;
   }
 
   // ---------------- Joining (I scan / type a code) ----------------
 
   /// Validates a scanned QR payload or manually typed code.
   ///
-  /// For typed codes we can only validate the FORMAT and expiry here; the
-  /// identity arrives when both devices exchange hello payloads over the
-  /// LAN channel during confirmation.
+  /// For typed codes only the FORMAT (and expiry, for a QR payload) can be
+  /// checked locally. The identity is then resolved in one of two ways:
+  ///  * internet backend configured -> server-side exact-code lookup;
+  ///  * LAN only -> the peer's own announce packet, once both devices are on
+  ///    the same network.
   InviteCheckResult checkInvite(
     String rawInput, {
     required UserProfile me,
   }) {
-    final _ParsedInvite? invite = _parseInvite(rawInput);
+    final InviteIdentity? invite = parseInvite(rawInput);
     if (invite == null) return InviteCheckResult.invalid;
     if (invite.id == me.id) return InviteCheckResult.selfInvite;
+
+    // A QR code carries its issue time, so a screenshotted code that is older
+    // than the TTL is rejected instead of connecting to a stale identity.
+    // (A hand-typed code has no timestamp, so only its format can be checked.)
+    final DateTime? issuedAt = invite.issuedAt;
+    if (issuedAt != null && DateTime.now().difference(issuedAt) > inviteTtl) {
+      return InviteCheckResult.expired;
+    }
 
     if (database.loadRemovedFriendIds().contains(invite.id)) {
       // Previously removed friend: still valid, but both sides must
@@ -107,8 +150,13 @@ class FriendService {
     return InviteCheckResult.ok;
   }
 
-  /// Extracts the identity from a scanned QR payload.
-  _ParsedInvite? _parseInvite(String rawInput) {
+  /// Parses a scanned QR payload or a hand-typed code into the identity it
+  /// carries. Returns null when the input is not a SmartBridge code at all.
+  ///
+  /// Public so the Add Friend screen reuses exactly this logic instead of
+  /// re-implementing JSON parsing (they drifted apart once already, which made
+  /// typed-code connections silently never resolve).
+  InviteIdentity? parseInvite(String rawInput) {
     final String input = rawInput.trim();
     if (input.isEmpty) return null;
 
@@ -120,11 +168,15 @@ class FriendService {
             decoded['app'] == 'smartbridge' &&
             decoded['id'] is String &&
             decoded['code'] is String) {
-          return _ParsedInvite(
+          final Object? uid = decoded['uid'];
+          return InviteIdentity(
             id: decoded['id'] as String,
             name: (decoded['name'] ?? 'Friend') as String,
             role: roleFromName(decoded['role'] as String?),
             code: decoded['code'] as String,
+            issuedAt: DateTime.tryParse((decoded['iat'] ?? '') as String),
+            remoteId: uid is String && uid.isNotEmpty ? uid : null,
+            fromQr: true,
           );
         }
       } catch (_) {
@@ -136,11 +188,15 @@ class FriendService {
     // Typed code - validate format SB-####-## (digits or letters).
     final RegExp codePattern = RegExp(r'^SB-[A-Z0-9]{3,8}-[A-Z0-9]{2,4}$');
     if (codePattern.hasMatch(input.toUpperCase())) {
-      return _ParsedInvite(
-        id: 'code:${input.toUpperCase()}', // resolved later via hello exchange
+      final String code = input.toUpperCase();
+      return InviteIdentity(
+        // A placeholder id; resolved to the real identity when the peer
+        // announces itself on the local network, or immediately by the
+        // backend when it is configured (see ChatService / AddFriendScreen).
+        id: 'code:$code',
         name: 'Friend',
-        role: UserRole.deaf, // replaced by hello payload
-        code: input.toUpperCase(),
+        role: UserRole.deaf, // replaced by the peer's real role
+        code: code,
       );
     }
     return null;
@@ -169,18 +225,24 @@ class FriendService {
   Future<void> clearPendingConfirmation() =>
       prefs.remove(_kPendingConfirmation);
 
-  /// Both sides call this after the LAN hello exchange succeeded.
-  /// Returns the confirmed friend (with the real display name).
+  /// Both sides call this after the connection was confirmed (in person, or
+  /// over the backend). Returns the confirmed friend (with the real display
+  /// name).
+  ///
+  /// [remoteId] is the peer's backend user id when the connection was made by
+  /// two backend-enabled builds; it is what makes internet delivery possible.
   Future<Friend> confirmFriendship({
     required String friendId,
     required String friendName,
     required UserRole friendRole,
+    String? remoteId,
   }) async {
     final Friend friend = Friend(
       id: friendId,
       name: friendName,
       role: friendRole,
       addedAt: DateTime.now(),
+      remoteId: remoteId,
     );
     await database.addFriend(friend);
     await clearPendingConfirmation();
@@ -212,16 +274,30 @@ class FriendService {
 }
 
 @immutable
-class _ParsedInvite {
-  const _ParsedInvite({
+class InviteIdentity {
+  const InviteIdentity({
     required this.id,
     required this.name,
     required this.role,
     required this.code,
+    this.issuedAt,
+    this.remoteId,
+    this.fromQr = false,
   });
 
   final String id;
   final String name;
   final UserRole role;
   final String code;
+
+  /// Only present for QR payloads; null for hand-typed codes.
+  final DateTime? issuedAt;
+
+  /// The peer's backend user id, when their code was generated by a build with
+  /// the internet backend configured. Null for LAN-only peers.
+  final String? remoteId;
+
+  /// True when this came from a scanned QR payload (which carries a full
+  /// identity) rather than a hand-typed short code.
+  final bool fromQr;
 }

@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../backend/remote_backend.dart';
 import '../models/user_profile.dart';
 import '../services/friend_service.dart';
 import '../services/session_service.dart';
@@ -12,12 +12,20 @@ import '../widgets/accessibility.dart';
 
 /// Add Friend screen.
 ///
-/// Tab 1 (Show my QR): my expiring invite code as QR + readable text.
+/// Tab 1 (Show my code): my expiring invite code as QR + readable text, plus
+/// any connection requests waiting for my confirmation.
 /// Tab 2 (Scan / type code): camera scanner or manual code entry, then
 /// mutual confirmation with a preview of who is connecting.
 ///
-/// No public search exists anywhere in the app: connecting requires two
-/// people standing next to each other.
+/// CONNECTION PATHS
+///  * LAN only            -> the code is resolved from the peer's announce
+///                           packet once both devices share a network.
+///  * Backend configured   -> the code is resolved on the server by an
+///                           exact-match lookup, so friends on different
+///                           networks can connect and chat.
+///
+/// Either way there is no public search anywhere in the app: connecting always
+/// requires a code one person physically showed the other.
 class AddFriendScreen extends StatefulWidget {
   const AddFriendScreen({super.key, required this.session});
 
@@ -33,17 +41,34 @@ class _AddFriendScreenState extends State<AddFriendScreen>
   final TextEditingController _codeController = TextEditingController();
   Timer? _ticker;
 
+  /// The code currently on screen. Held in state instead of being regenerated
+  /// inside build(), which used to write to storage on every single frame.
+  late String _myCode;
+
+  /// Inbound requests from people who scanned my code (backend only).
+  final List<RemoteRequest> _requests = <RemoteRequest>[];
+  StreamSubscription<RemoteRequest>? _requestSub;
+  bool _busy = false;
+
   @override
   void initState() {
     super.initState();
+    _myCode = _friends.getOrCreateInviteCode(widget.session.profile!);
     _ticker = Timer.periodic(const Duration(seconds: 1), (Timer _) {
-      if (mounted) setState(() {}); // drives the countdown text
+      if (!mounted) return;
+      if (_friends.inviteSecondsLeft() == 0) {
+        // Refresh an expired code so the QR on screen is always usable.
+        _myCode = _friends.getOrCreateInviteCode(widget.session.profile!);
+      }
+      setState(() {}); // drives the countdown text
     });
+    _requestSub = widget.session.backend?.incomingRequests.listen(_onRequest);
   }
 
   @override
   void dispose() {
     _ticker?.cancel();
+    _requestSub?.cancel();
     _tabs.dispose();
     _codeController.dispose();
     super.dispose();
@@ -51,13 +76,61 @@ class _AddFriendScreenState extends State<AddFriendScreen>
 
   SessionService get _session => widget.session;
   FriendService get _friends => _session.friendService;
-
-  String get _myCode => _friends.getOrCreateInviteCode(_session.profile!);
+  RemoteBackend? get _backend => _session.backend;
 
   String _formatCountdown(int secondsLeft) {
     final int minutes = secondsLeft ~/ 60;
     final int seconds = secondsLeft % 60;
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+
+  // ---------------- Inbound requests (my code was scanned) ----------------
+
+  void _onRequest(RemoteRequest request) {
+    if (!mounted) return;
+    setState(() => _requests.add(request));
+    _session.tts.speakConfirmation(
+      '${request.peer.displayName} scanned your code and wants to connect. '
+      'Tap Confirm connection.',
+    );
+  }
+
+  Future<void> _confirmRequest(RemoteRequest request) async {
+    final RemoteBackend? backend = _backend;
+    if (backend == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      final bool ok = await backend.confirmFriendship(request.friendshipId);
+      if (!ok) {
+        _showError('Could not confirm the connection. Please try again.');
+        return;
+      }
+      // The peer's backend id doubles as their local friend id for internet
+      // connections, which keeps every stored message addressed consistently.
+      await _friends.confirmFriendship(
+        friendId: request.peer.userId,
+        friendName: request.peer.displayName,
+        friendRole: request.peer.role,
+        remoteId: request.peer.userId,
+      );
+      if (!mounted) return;
+      setState(() => _requests.remove(request));
+      await _session.tts.speakConfirmation(
+        '${request.peer.displayName} is now your friend.',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${request.peer.displayName} is now your friend'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _dismissRequest(RemoteRequest request) {
+    setState(() => _requests.remove(request));
   }
 
   // ---------------- Flow: enter / scan a code ----------------
@@ -68,39 +141,56 @@ class _AddFriendScreenState extends State<AddFriendScreen>
 
     switch (result) {
       case InviteCheckResult.invalid:
+      case InviteCheckResult.expired:
         _showError('Invalid or expired friend code.');
         return;
       case InviteCheckResult.selfInvite:
         _showError('That is your own code. Share it with a friend!');
-        return;
-      case InviteCheckResult.expired:
-        _showError('Invalid or expired friend code.');
         return;
       case InviteCheckResult.removed:
       case InviteCheckResult.ok:
         break;
     }
 
-    // QR payloads carry the full identity; typed codes resolve the name
-    // during confirmation (the other side sends its hello payload).
-    final Map<String, dynamic>? qr = _tryParseQr(raw);
-    String friendName = 'Friend';
-    UserRole friendRole = me.role == UserRole.blind
-        ? UserRole.deaf
-        : UserRole.blind; // sensible default until hello exchange
-    String friendId = raw.trim().toUpperCase();
+    // The code we were given always parses at this point (checkInvite above
+    // already used the same parser).
+    final InviteIdentity identity = _friends.parseInvite(raw)!;
 
-    if (qr != null) {
-      friendId = (qr['id'] ?? friendId) as String;
-      friendName = (qr['name'] ?? friendName) as String;
-      final String? role = qr['role'] as String?;
-      if (role == 'blind') friendRole = UserRole.blind;
-      if (role == 'deaf') friendRole = UserRole.deaf;
+    String friendId = identity.id;
+    String friendName = identity.name;
+    UserRole friendRole = identity.role;
+    String? remoteId = identity.remoteId;
+
+    // Internet path: let the server resolve the code. This is an exact match
+    // only - there is no way to enumerate or search users - and it also creates
+    // the pending request the other side has to confirm.
+    final RemoteBackend? backend = _backend;
+    if (backend != null && backend.state == BackendState.ready) {
+      final RemotePeer? peer = await backend.requestFriendship(identity.code);
+      if (peer != null) {
+        remoteId = peer.userId;
+        friendName = peer.displayName;
+        friendRole = peer.role;
+        // For internet connections the backend id is the local id too, so a
+        // message received from them always lands in this same conversation.
+        friendId = peer.userId;
+      } else if (!identity.fromQr) {
+        // A typed code that the server does not recognise cannot be resolved
+        // locally either, so be honest instead of creating a dead contact.
+        _showError('Invalid or expired friend code.');
+        return;
+      }
+    }
+
+    if (friendId == me.id) {
+      _showError('That is your own code. Share it with a friend!');
+      return;
     }
 
     final bool? confirmed = await _showConfirmDialog(
       name: friendName,
       role: friendRole,
+      online: remoteId != null,
     );
     if (confirmed != true || !mounted) return;
 
@@ -108,6 +198,7 @@ class _AddFriendScreenState extends State<AddFriendScreen>
       friendId: friendId,
       friendName: friendName,
       friendRole: friendRole,
+      remoteId: remoteId,
     );
 
     if (_session.profile?.role == UserRole.blind) {
@@ -120,23 +211,10 @@ class _AddFriendScreenState extends State<AddFriendScreen>
     Navigator.of(context).pop();
   }
 
-  Map<String, dynamic>? _tryParseQr(String raw) {
-    final String input = raw.trim();
-    if (!input.startsWith('{')) return null;
-    try {
-      final Object? decoded = jsonDecode(input);
-      if (decoded is Map<String, dynamic> && decoded['app'] == 'smartbridge') {
-        return decoded;
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
   Future<bool?> _showConfirmDialog({
     required String name,
     required UserRole role,
+    required bool online,
   }) {
     final String roleLabel =
         role == UserRole.blind ? 'blind user' : 'deaf user';
@@ -147,7 +225,10 @@ class _AddFriendScreenState extends State<AddFriendScreen>
         content: Text(
           'Connect with $name ($roleLabel)?\n\n'
           'They will appear in your friends list and you can start chatting. '
-          'Both of you must confirm.',
+          'Both of you must confirm.'
+          // Telling the user which transport will be used is useful when a
+          // connection looks like it worked but messages never arrive.
+          '${online ? '\n\nYou can chat from anywhere over the internet.' : '\n\nYou can chat while both devices are on the same Wi-Fi.'}',
         ),
         actions: [
           TextButton(
@@ -164,6 +245,7 @@ class _AddFriendScreenState extends State<AddFriendScreen>
   }
 
   void _showError(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -220,8 +302,11 @@ class _AddFriendScreenState extends State<AddFriendScreen>
                     ),
                   ),
                   child: QrImageView(
-                    data: _friends
-                        .buildInviteQrPayload(_session.profile!, _myCode),
+                    data: _friends.buildInviteQrPayload(
+                      _session.profile!,
+                      _myCode,
+                      issuedAt: _friends.inviteIssuedAt(),
+                    ),
                     size: 220,
                     backgroundColor: Colors.white,
                   ),
@@ -269,7 +354,67 @@ class _AddFriendScreenState extends State<AddFriendScreen>
                   ],
                 ),
               ),
-              if (blindMode) ...[
+              // Connection requests waiting for MY confirmation.
+              if (_requests.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 24),
+                Text(
+                  'Waiting for your confirmation',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w900),
+                ),
+                const SizedBox(height: 8),
+                for (final RemoteRequest request in _requests)
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            request.peer.displayName,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800, fontSize: 17),
+                          ),
+                          Text(
+                            request.peer.role == UserRole.blind
+                                ? 'Blind user'
+                                : 'Deaf user',
+                            style: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: FilledButton.icon(
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _confirmRequest(request),
+                                  icon: const Icon(Icons.check_rounded),
+                                  label: const Text('Confirm connection'),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton(
+                                onPressed: _busy
+                                    ? null
+                                    : () => _dismissRequest(request),
+                                child: const Text('Later'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+              if (blindMode) ...<Widget>[
                 const SizedBox(height: 24),
                 BigButton(
                   label: 'Read my code aloud',
@@ -323,6 +468,7 @@ class _AddFriendScreenState extends State<AddFriendScreen>
                 decoration: const InputDecoration(
                   hintText: 'SB-0000-00',
                 ),
+                onSubmitted: _submitCode,
               ),
               const SizedBox(height: 12),
               BigButton(
@@ -350,6 +496,7 @@ class _QrScanDialog extends StatefulWidget {
 class _QrScanDialogState extends State<_QrScanDialog> {
   final MobileScannerController _controller = MobileScannerController();
   bool _handled = false;
+  bool _failed = false;
 
   @override
   void dispose() {
@@ -366,19 +513,37 @@ class _QrScanDialogState extends State<_QrScanDialog> {
           title: const Text('Scan friend code'),
           backgroundColor: Colors.black,
         ),
-        body: MobileScanner(
-          controller: _controller,
-          onDetect: (BarcodeCapture capture) {
-            if (_handled) return;
-            for (final Barcode barcode in capture.barcodes) {
-              final String? value = barcode.rawValue;
-              if (value == null || value.isEmpty) continue;
-              _handled = true;
-              Navigator.of(context).pop(value);
-              return;
-            }
-          },
-        ),
+        body: _failed
+            ? // Camera denied or unavailable: explain and offer a way out
+              // instead of a black screen. The typed-code tab always works.
+              const EmptyState(
+                icon: Icons.camera_alt_outlined,
+                title: 'Camera unavailable',
+                subtitle:
+                    'The camera could not be started. Close this screen and '
+                    'type your friend\'s short code instead.',
+              )
+            : MobileScanner(
+                controller: _controller,
+                onDetect: (BarcodeCapture capture) {
+                  if (_handled) return;
+                  for (final Barcode barcode in capture.barcodes) {
+                    final String? value = barcode.rawValue;
+                    if (value == null || value.isEmpty) continue;
+                    _handled = true;
+                    Navigator.of(context).pop(value);
+                    return;
+                  }
+                },
+                errorBuilder: (BuildContext context, MobileScannerException e) {
+                  if (!_failed) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      if (mounted) setState(() => _failed = true);
+                    });
+                  }
+                  return const SizedBox.shrink();
+                },
+              ),
       ),
     );
   }

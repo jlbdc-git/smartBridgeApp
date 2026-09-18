@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../models/ui_preferences.dart';
 import '../models/user_profile.dart';
 import '../models/chat_message.dart';
 import '../services/session_service.dart';
@@ -18,9 +20,21 @@ import 'settings_screen.dart';
 /// Owns routes, the offline banner, new-message announcements (deaf mode)
 /// and spoken confirmations (blind mode).
 class AppShell extends StatefulWidget {
-  const AppShell({super.key, required this.session});
+  const AppShell({
+    super.key,
+    required this.session,
+    required this.prefs,
+    required this.onPreferencesChanged,
+  });
 
   final SessionService session;
+
+  /// Current UI preferences owned by MyApp (the theme layer).
+  final AppUiPreferences prefs;
+
+  /// Hands an updated preference object back to MyApp, which rebuilds the
+  /// MaterialApp immediately (text scale / theme / contrast).
+  final ValueChanged<AppUiPreferences> onPreferencesChanged;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -29,6 +43,7 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   int _homeIndex = 0;
   StreamSubscription<ChatMessage>? _incomingSub;
+  StreamSubscription<void>? _profileSub;
 
   @override
   void initState() {
@@ -36,11 +51,17 @@ class _AppShellState extends State<AppShell> {
     _incomingSub = widget.session.chatService.incomingMessages.listen(
       _onIncoming,
     );
+    // A role or name change (Settings -> Profile) must re-render the home
+    // immediately: blind and deaf homes are different screens entirely.
+    _profileSub = widget.session.profileEvents.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
     _incomingSub?.cancel();
+    _profileSub?.cancel();
     super.dispose();
   }
 
@@ -50,16 +71,51 @@ class _AppShellState extends State<AppShell> {
     if (!mounted) return;
     setState(() {}); // refresh unread badges
 
-    final bool blind = _session.profile?.role == UserRole.blind;
-    if (blind) {
-      // Spoken alert with sender name; the chat screen reads the body.
+    // The open chat screen already reads/vibrates for its own messages.
+    if (_session.openChatFriendId == message.senderId) return;
+
+    if (_session.profile?.role == UserRole.blind) {
+      // Spoken alert with the sender's name; the chat screen reads the body.
       _session.tts.speakConfirmation(
         'New message from ${message.senderName}.',
       );
-    } else if (_session.vibrationEnabled) {
-      // Deaf mode: vibration pattern. No critical info depends on sound.
-      // (Visual notification banner shows in home when returning.)
+      return;
     }
+
+    // Deaf mode: tactile + visual notification. No information depends on
+    // sound alone.
+    if (_session.shouldVibrateOnIncoming) {
+      HapticFeedback.vibrate();
+    }
+    if (_session.notificationsEnabled) {
+      _showIncomingBanner(message);
+    }
+  }
+
+  /// Visual new-message banner with a shortcut into the conversation.
+  void _showIncomingBanner(ChatMessage message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text(
+          'New message from ${message.senderName}\n${message.displayText}',
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+        ),
+        action: SnackBarAction(
+          label: 'Open',
+          onPressed: () =>
+              Navigator.of(context).pushNamed('/chat', arguments: message.senderId),
+        ),
+      ),
+    );
+  }
+
+  /// Adds the built-in TEST contact and refreshes the home list.
+  Future<void> _addSampleFriend() async {
+    await _session.addSampleFriend();
+    if (mounted) setState(() {});
   }
 
   void _openTranslator() {
@@ -86,6 +142,18 @@ class _AppShellState extends State<AppShell> {
       return const SizedBox.shrink();
     }
 
+    // Android back button: leave the Settings tab before leaving the app.
+    return PopScope(
+      canPop: _homeIndex == 0,
+      onPopInvokedWithResult: (bool didPop, Object? result) {
+        if (didPop) return;
+        if (_homeIndex != 0) setState(() => _homeIndex = 0);
+      },
+      child: _buildScaffold(),
+    );
+  }
+
+  Widget _buildScaffold() {
     return Scaffold(
       body: IndexedStack(
         index: _homeIndex,
@@ -94,12 +162,18 @@ class _AppShellState extends State<AppShell> {
             session: _session,
             onOpenTranslator: _openTranslator,
             onOpenSettings: () => setState(() => _homeIndex = 1),
+            onAddSampleFriend: _addSampleFriend,
             unreadCount: _session.unreadCount(),
           ),
           AppSettingsScreen(
             session: _session,
-            onPreferencesChanged: (prefs) async {
-              await _session.updateUiPreferences(prefs);
+            onBack: () => setState(() => _homeIndex = 0),
+            onPreferencesChanged: (AppUiPreferences next) {
+              // Single source of truth: the session keeps memory + disk + the
+              // TTS engine in sync, and MyApp re-themes instantly so the new
+              // font size / contrast / theme applies without a restart.
+              _session.updateUiPreferences(next);
+              widget.onPreferencesChanged(next);
               if (mounted) setState(() {});
             },
           ),
@@ -111,9 +185,16 @@ class _AppShellState extends State<AppShell> {
 
 /// Wraps the shell with named routes + offline listening.
 class AppRoot extends StatefulWidget {
-  const AppRoot({super.key, required this.session});
+  const AppRoot({
+    super.key,
+    required this.session,
+    required this.prefs,
+    required this.onPreferencesChanged,
+  });
 
   final SessionService session;
+  final AppUiPreferences prefs;
+  final ValueChanged<AppUiPreferences> onPreferencesChanged;
 
   @override
   State<AppRoot> createState() => _AppRootState();
@@ -158,7 +239,11 @@ class _AppRootState extends State<AppRoot> {
             return MaterialPageRoute<void>(
               builder: (BuildContext context) => _OfflineBanner(
                 offline: _offline,
-                child: AppShell(session: widget.session),
+                child: AppShell(
+                  session: widget.session,
+                  prefs: widget.prefs,
+                  onPreferencesChanged: widget.onPreferencesChanged,
+                ),
               ),
             );
           case '/friends':
@@ -206,7 +291,11 @@ class _AppRootState extends State<AppRoot> {
             return MaterialPageRoute<void>(
               builder: (BuildContext context) => _OfflineBanner(
                 offline: _offline,
-                child: AppShell(session: widget.session),
+                child: AppShell(
+                  session: widget.session,
+                  prefs: widget.prefs,
+                  onPreferencesChanged: widget.onPreferencesChanged,
+                ),
               ),
             );
         }

@@ -41,8 +41,15 @@ class LocalDatabase {
       _prefs.setString(_kFriends, Friend.encodeList(friends));
 
   Future<void> addFriend(Friend friend) async {
-    final List<Friend> friends =
-        loadFriends().where((Friend f) => f.id != friend.id).toList();
+    final String? remoteId = friend.remoteId;
+    final List<Friend> friends = loadFriends()
+        // Never keep two local entries for the same backend user: reconnect
+        // via a typed code after connecting by QR previously would otherwise
+        // split the conversation in two.
+        .where((Friend f) =>
+            f.id != friend.id &&
+            !(remoteId != null && f.remoteId == remoteId))
+        .toList();
     friends.add(friend);
     await saveFriends(friends);
   }
@@ -63,6 +70,17 @@ class LocalDatabase {
   Friend? findFriend(String id) {
     for (final Friend f in loadFriends()) {
       if (f.id == id) return f;
+    }
+    return null;
+  }
+
+  /// Finds the friend that owns a given backend user id. Needed because
+  /// messages arriving over the internet are addressed with the sender's
+  /// backend id, which is not the local friend id.
+  Friend? findFriendByRemoteId(String remoteId) {
+    if (remoteId.isEmpty) return null;
+    for (final Friend f in loadFriends()) {
+      if (f.remoteId == remoteId) return f;
     }
     return null;
   }

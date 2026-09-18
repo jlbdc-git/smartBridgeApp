@@ -14,12 +14,16 @@ class HomeScreen extends StatelessWidget {
     required this.session,
     required this.onOpenTranslator,
     required this.onOpenSettings,
+    required this.onAddSampleFriend,
     required this.unreadCount,
   });
 
   final SessionService session;
   final VoidCallback onOpenTranslator;
   final VoidCallback onOpenSettings;
+
+  /// Adds the built-in TEST contact (no real person involved).
+  final Future<void> Function() onAddSampleFriend;
   final int unreadCount;
 
   @override
@@ -36,6 +40,7 @@ class HomeScreen extends StatelessWidget {
         : _DeafHome(
             session: session,
             onOpenSettings: onOpenSettings,
+            onAddSampleFriend: onAddSampleFriend,
             unreadCount: unreadCount,
           );
   }
@@ -110,9 +115,16 @@ class _BlindHome extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             Text(
-              'Tip: every button is announced. Your friends must be on the '
-              'same Wi-Fi for live chat; messages you send while offline are '
-              'kept and delivered later.',
+              // Stated honestly for whichever build this is: claiming Wi-Fi was
+              // required was wrong once the internet backend exists, and
+              // claiming the internet works would be wrong without it.
+              session.internetMessagingAvailable
+                  ? 'Tip: every button is announced. Messages reach your '
+                      'friends from anywhere. Anything sent while you are '
+                      'offline is kept and delivered later.'
+                  : 'Tip: every button is announced. Your friends must be on '
+                      'the same Wi-Fi for live chat; messages you send while '
+                      'offline are kept and delivered later.',
               style: TextStyle(
                 color: scheme.onSurfaceVariant,
                 height: 1.4,
@@ -171,11 +183,13 @@ class _DeafHome extends StatelessWidget {
   const _DeafHome({
     required this.session,
     required this.onOpenSettings,
+    required this.onAddSampleFriend,
     required this.unreadCount,
   });
 
   final SessionService session;
   final VoidCallback onOpenSettings;
+  final Future<void> Function() onAddSampleFriend;
   final int unreadCount;
 
   @override
@@ -230,11 +244,25 @@ class _DeafHome extends StatelessWidget {
             ),
           Expanded(
             child: friends.isEmpty
-                ? EmptyState(
-                    icon: Icons.group_add_rounded,
-                    title: 'No friends yet',
-                    subtitle:
-                        'Meet in person, then scan their QR code or type their code.',
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const EmptyState(
+                        icon: Icons.group_add_rounded,
+                        title: 'No friends yet',
+                        subtitle: 'Meet in person, then scan their QR code or '
+                            'type their code.',
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                        child: BigButton(
+                          label: 'Add sample friend (TEST)',
+                          icon: Icons.science_rounded,
+                          subtext: 'Try the app without a second phone',
+                          onPressed: onAddSampleFriend,
+                        ),
+                      ),
+                    ],
                   )
                 : ListView.builder(
                     padding: const EdgeInsets.all(16),
@@ -266,7 +294,9 @@ class _DeafHome extends StatelessWidget {
                             ),
                           ),
                           title: Text(
-                            friend.name,
+                            friend.isSample
+                                ? '${friend.name} - SAMPLE'
+                                : friend.name,
                             style: const TextStyle(
                                 fontWeight: FontWeight.w800, fontSize: 17),
                           ),
@@ -281,11 +311,16 @@ class _DeafHome extends StatelessWidget {
                                   backgroundColor: scheme.primary,
                                   child: Text(
                                     '$unread',
-                                    style: const TextStyle(
-                                      color: Colors.white,
+                                    // scheme.onPrimary, not hard-coded white:
+                                    // in dark mode primary is light cyan and a
+                                    // white count was almost invisible.
+                                    style: TextStyle(
+                                      color: scheme.onPrimary,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w900,
                                     ),
+                                    semanticsLabel:
+                                        '$unread unread message${unread == 1 ? '' : 's'}',
                                   ),
                                 )
                               : null,

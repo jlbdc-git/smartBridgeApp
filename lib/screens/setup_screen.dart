@@ -182,12 +182,21 @@ class _RoleCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: selected ? scheme.primaryContainer : scheme.surfaceContainerHighest,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
+    // The first screen a blind user meets: the card announces itself as a
+    // button and says whether it is the current choice, instead of leaving the
+    // checkmark to be discovered visually.
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: '$title. $subtitle',
+      onTap: onTap,
+      child: Material(
+        color:
+            selected ? scheme.primaryContainer : scheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
         child: Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
@@ -198,34 +207,35 @@ class _RoleCard extends StatelessWidget {
             ),
           ),
           child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 40,
-                color: selected ? scheme.primary : scheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w900,
-                          ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: TextStyle(color: scheme.onSurfaceVariant),
-                    ),
-                  ],
+              children: [
+                Icon(
+                  icon,
+                  size: 40,
+                  color: selected ? scheme.primary : scheme.onSurfaceVariant,
                 ),
-              ),
-              if (selected)
-                Icon(Icons.check_circle, color: scheme.primary, size: 30),
-            ],
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w900,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: TextStyle(color: scheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+                if (selected)
+                  Icon(Icons.check_circle, color: scheme.primary, size: 30),
+              ],
+            ),
           ),
         ),
       ),

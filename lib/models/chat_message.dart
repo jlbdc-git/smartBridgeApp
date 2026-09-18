@@ -80,12 +80,15 @@ class ChatMessage {
   ChatMessage copyWith({
     MessageStatus? status,
     bool? readByReceiver,
+    String? senderId,
+    String? receiverId,
+    String? senderName,
   }) {
     return ChatMessage(
       id: id,
-      senderId: senderId,
-      senderName: senderName,
-      receiverId: receiverId,
+      senderId: senderId ?? this.senderId,
+      senderName: senderName ?? this.senderName,
+      receiverId: receiverId ?? this.receiverId,
       originalText: originalText,
       translatedText: translatedText,
       direction: direction,
@@ -125,9 +128,8 @@ class ChatMessage {
       direction: directionFromName(json['direction'] as String?),
       timestamp:
           DateTime.tryParse((json['timestamp'] ?? '') as String) ?? DateTime.now(),
-      emotion: json['emotion'] == null
-          ? null
-          : Emotion.fromName(json['emotion'] as String?),
+      // Unknown/absent emotion stays null: never guess how someone felt.
+      emotion: Emotion.fromName(json['emotion'] as String?),
       status: statusFromName(json['status'] as String?),
       readByReceiver: (json['readByReceiver'] ?? false) as bool,
       audioPath: json['audioPath'] as String?,

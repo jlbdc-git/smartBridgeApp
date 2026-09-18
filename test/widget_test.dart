@@ -36,6 +36,19 @@ void main() {
         'I need help with my bag now',
       );
     });
+
+    test('a request stays a request, not a bare imperative', () {
+      // Before the phrase rule existed, the single-word "possible" -> "can"
+      // mapping produced "Is it can to meet tomorrow?".
+      expect(
+        translator.simplify('Is it possible to meet tomorrow?'),
+        'Can you meet tomorrow?',
+      );
+      expect(
+        translator.simplify('Would it be possible to call me later?'),
+        'Can you call me later?',
+      );
+    });
   });
 
   group('DeafTranslator (broken input -> natural English)', () {
@@ -53,6 +66,12 @@ void main() {
         translator.improve('I go mall tomorrow you want come?'),
         "I'm going to the mall tomorrow. Would you like to come with me?",
       );
+    });
+
+    test('verbs ending in "ee" are not mangled into "seing"', () {
+      final String out = translator.improve('i see you tomorrow');
+      expect(out.toLowerCase(), contains('seeing'));
+      expect(out.toLowerCase(), isNot(contains('seing')));
     });
   });
 

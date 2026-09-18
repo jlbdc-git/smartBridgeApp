@@ -42,6 +42,14 @@ class _FriendsScreenState extends State<FriendsScreen> {
     });
   }
 
+  Future<void> _addSampleFriend() async {
+    await widget.session.addSampleFriend();
+    await _refresh();
+    await widget.session.tts.speakConfirmation(
+      'Sample friend added. Open it to test messaging.',
+    );
+  }
+
   Future<void> _openChat(Friend friend) async {
     if (widget.session.profile?.role == UserRole.blind) {
       await widget.session.tts
@@ -78,7 +86,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
     );
 
     if (confirmed == true) {
-      await widget.session.database.removeFriend(friend.id);
+      // Goes through the session so the backend friendship is revoked too:
+      // removing a friend must stop them reaching this device, not just hide
+      // them from the list.
+      await widget.session.removeFriend(friend);
       await _refresh();
       if (widget.session.profile?.role == UserRole.blind) {
         await widget.session.tts
@@ -104,11 +115,26 @@ class _FriendsScreenState extends State<FriendsScreen> {
         label: const Text('Add friend'),
       ),
       body: _friends.isEmpty
-          ? const EmptyState(
-              icon: Icons.group_add_rounded,
-              title: 'No friends yet',
-              subtitle:
-                  'You must meet in person to connect. Tap Add friend to show your code.',
+          ? Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const EmptyState(
+                  icon: Icons.group_add_rounded,
+                  title: 'No friends yet',
+                  subtitle:
+                      'You must meet in person to connect. Tap Add friend to '
+                      'show your code.',
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                  child: BigButton(
+                    label: 'Add sample friend (TEST)',
+                    icon: Icons.science_rounded,
+                    subtext: 'Practice chatting without a second phone',
+                    onPressed: _addSampleFriend,
+                  ),
+                ),
+              ],
             )
           : ListView.builder(
               padding: const EdgeInsets.all(16),
@@ -130,13 +156,32 @@ class _FriendsScreenState extends State<FriendsScreen> {
                             fontSize: 20, fontWeight: FontWeight.w900),
                       ),
                     ),
-                    title: Text(
-                      friend.name,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 18),
+                    title: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            friend.name,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800, fontSize: 18),
+                          ),
+                        ),
+                        if (friend.isSample) ...[
+                          const SizedBox(width: 8),
+                          const _SampleTag(),
+                        ],
+                      ],
                     ),
                     subtitle: Text(
-                      friend.role == UserRole.blind ? 'Blind user' : 'Deaf user',
+                      friend.isSample
+                          ? 'TEST contact - replies automatically'
+                          : <String>[
+                              friend.role == UserRole.blind
+                                  ? 'Blind user'
+                                  : 'Deaf user',
+                              if (friend.isReachableOnline)
+                                'chat from anywhere',
+                            ].join(' - '),
                     ),
                     trailing: IconButton(
                       tooltip: 'Remove ${friend.name}',
@@ -149,6 +194,33 @@ class _FriendsScreenState extends State<FriendsScreen> {
                 );
               },
             ),
+    );
+  }
+}
+
+/// Small badge marking the built-in test contact so it can never be confused
+/// with a real friend.
+class _SampleTag extends StatelessWidget {
+  const _SampleTag();
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: scheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        'SAMPLE',
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.6,
+          color: scheme.onTertiaryContainer,
+        ),
+      ),
     );
   }
 }
