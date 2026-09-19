@@ -83,8 +83,12 @@ class RemoteTransport implements ChatTransport {
   }
 
   /// True when this friend can currently be reached over the internet.
+  /// Also false while the friend request is still pending: the server would
+  /// refuse the message insert (RLS: "only confirmed friends may send").
   bool canReach(Friend friend) =>
-      friend.remoteId != null && backend.state == BackendState.ready;
+      friend.remoteId != null &&
+      friend.connectionStatus == ConnectionStatus.accepted &&
+      backend.state == BackendState.ready;
 
   // ---------------- Sending ----------------
 
@@ -100,6 +104,10 @@ class RemoteTransport implements ChatTransport {
     // is responsible. Reporting false keeps the message pending.
     if (remoteId == null) return false;
     if (backend.state != BackendState.ready) return false;
+    // The friendship must be accepted before anything is uploaded. Trying
+    // anyway used to produce `42501 new row violates row-level security
+    // policy` on the server for every retry.
+    if (friend.connectionStatus != ConnectionStatus.accepted) return false;
 
     final ChatMessage message = ChatMessage.fromWire(payload);
     // Stamp the wire fields the server needs, keeping the local ids intact for

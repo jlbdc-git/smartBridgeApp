@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../backend/remote_backend.dart';
 import '../database/local_database.dart';
 import '../models/chat_message.dart';
 import '../models/emotion.dart';
@@ -259,11 +260,24 @@ class ChatService {
 
     // 2. Best-effort delivery right now. The built-in sample friend counts as
     //    delivered locally (its replies are generated on this device).
-    final bool delivered;
+    bool delivered = false;
     if (sampleFriend.isSampleFriend(friend.id)) {
       delivered = true;
+    } else if (friend.connectionStatus != ConnectionStatus.accepted) {
+      // Friend request not accepted yet: the backend would (correctly) refuse
+      // the insert, so do not even try. The message stays pending and will
+      // deliver automatically once the request is accepted.
+      delivered = false;
     } else {
-      delivered = await _deliver(message);
+      try {
+        delivered = await _deliver(message);
+      } on PolicyRefusalException {
+        // This device believed the friendship was confirmed, but the server
+        // disagrees (e.g. the other side removed and re-requested). Demote to
+        // pending; the message stays queued.
+        delivered = false;
+        await _markPending(friend.id);
+      }
     }
     final ChatMessage stored = delivered
         ? message.copyWith(status: MessageStatus.sent)
@@ -290,13 +304,28 @@ class ChatService {
   /// Retries every pending message for [friendId] (e.g. friend came online).
   Future<void> retryPendingFor(String friendId) async {
     if (sampleFriend.isSampleFriend(friendId)) return;
+    final Friend? friend = database.findFriend(friendId);
+    // Not accepted yet: retrying now would just hit the RLS refusal again.
+    if (friend == null ||
+        friend.connectionStatus != ConnectionStatus.accepted) {
+      return;
+    }
     final List<ChatMessage> pending = database
         .loadMessages(friendId)
         .where((ChatMessage m) =>
             m.senderId == (_me?.id ?? '') && m.status != MessageStatus.sent)
         .toList();
     for (final ChatMessage message in pending) {
-      final bool delivered = await _deliver(message);
+      bool delivered = false;
+      try {
+        delivered = await _deliver(message);
+      } on PolicyRefusalException {
+        // The server says the friendship is not confirmed (e.g. this device
+        // still believed the old "instant friend" flow). Flip the link to
+        // pending; the message stays queued and delivers after acceptance.
+        delivered = false;
+        await _markPending(friendId);
+      }
       if (delivered) {
         await database.upsertMessage(
           friendId,
@@ -305,6 +334,21 @@ class ChatService {
         _outboxEvents.add(message.id);
       }
     }
+  }
+
+  /// Demotes a friend link to pending (the server refused a write because the
+  /// friendship is not confirmed). Returns true when the state changed, so
+  /// the UI can be refreshed exactly once instead of on every refusal.
+  Future<bool> _markPending(String friendId) async {
+    final Friend? friend = database.findFriend(friendId);
+    if (friend == null ||
+        friend.connectionStatus == ConnectionStatus.pending) {
+      return false;
+    }
+    await database.addFriend(
+      friend.copyWith(connectionStatus: ConnectionStatus.pending),
+    );
+    return true;
   }
 
   // ---------------- Blind-side reading ----------------

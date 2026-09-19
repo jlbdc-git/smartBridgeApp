@@ -295,6 +295,14 @@ class _ChatScreenState extends State<ChatScreen> {
               icon: Icons.wifi_off_rounded,
               color: Color(0xFFB45309),
             ),
+          if (_friend.connectionStatus == ConnectionStatus.pending)
+            StatusBanner(
+              message:
+                  'Waiting for ${_friend.name} to accept your friend request. '
+                  'Messages will be delivered once accepted.',
+              icon: Icons.hourglass_top_rounded,
+              color: scheme.primary,
+            ),
           Expanded(
             child: messages.isEmpty
                 ? EmptyState(

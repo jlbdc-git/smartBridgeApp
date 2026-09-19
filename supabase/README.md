@@ -165,6 +165,34 @@ subscriptions are only attempted at startup.
 
 ---
 
+## 6.1 Friend request upgrade (run AFTER fix_grants.sql)
+
+**`fix_friend_requests.sql`** upgrades the connection flow from "scan -> both
+confirm" to a real one-sided **friend request** system:
+
+```text
+A enters B's code  ->  request_friendship()  ->  pending row on the server
+B opens Friend Requests  ->  sees the request
+    Accept  ->  confirm_friendship()  ->  BOTH devices become friends
+    Decline ->  decline_friendship()  ->  chat stays shut; a new request can
+                                          revive it later
+```
+
+Only the invited side can accept or decline (enforced inside the database
+functions, not the app). Two people who independently invite each other are
+confirmed automatically (mutual intent). No duplicate rows can exist: the pair
+has at most one friendship row in either direction.
+
+**This also fixes the live `42501 new row violates row-level security policy
+for table "messages"` errors.** The messages policy is correct and unchanged -
+it only allows inserts between CONFIRMED friends. The old app flow uploaded
+messages while the request was still pending, which the database (rightly)
+rejected. The app now: queues messages for pending friends, never attempts the
+insert until acceptance, and if the server still refuses, marks the link
+pending instead of retrying forever.
+
+---
+
 ## 7. Status: what is and is not verified
 
 | Item | Status |

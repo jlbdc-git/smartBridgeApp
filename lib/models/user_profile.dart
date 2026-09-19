@@ -70,8 +70,18 @@ class UserProfile {
   }
 }
 
-/// A confirmed friend. Only confirmed friends can chat with each other.
-@immutable
+/// How far the connection to this friend has progressed.
+///
+/// Legacy entries (stored before friend requests existed) have no flag in
+/// JSON and default to [accepted], so nothing that already worked changes.
+enum ConnectionStatus { pending, accepted }
+
+ConnectionStatus connectionStatusFromName(String? name) {
+  return name == 'pending'
+      ? ConnectionStatus.pending
+      : ConnectionStatus.accepted;
+}
+
 class Friend {
   const Friend({
     required this.id,
@@ -80,6 +90,7 @@ class Friend {
     required this.addedAt,
     this.isSample = false,
     this.remoteId,
+    this.connectionStatus = ConnectionStatus.accepted,
   });
 
   final String id;
@@ -96,7 +107,16 @@ class Friend {
   /// only be reached over the LAN.
   final String? remoteId;
 
-  Friend copyWith({String? name, String? remoteId}) {
+  /// pending = a request was sent (or received) but not accepted yet; the
+  /// chat stays blocked until the other side accepts. accepted = chatting
+  /// is allowed.
+  final ConnectionStatus connectionStatus;
+
+  Friend copyWith({
+    String? name,
+    String? remoteId,
+    ConnectionStatus? connectionStatus,
+  }) {
     return Friend(
       id: id,
       name: name ?? this.name,
@@ -104,6 +124,7 @@ class Friend {
       addedAt: addedAt,
       isSample: isSample,
       remoteId: remoteId ?? this.remoteId,
+      connectionStatus: connectionStatus ?? this.connectionStatus,
     );
   }
 
@@ -117,6 +138,9 @@ class Friend {
         'addedAt': addedAt.toIso8601String(),
         'isSample': isSample,
         'remoteId': remoteId,
+        // Absent for accepted so older app versions read the list unchanged.
+        if (connectionStatus == ConnectionStatus.pending)
+          'connectionStatus': 'pending',
       };
 
   factory Friend.fromJson(Map<String, dynamic> json) {
@@ -129,6 +153,9 @@ class Friend {
       // Friends stored by previous versions have no flag: default to false.
       isSample: (json['isSample'] ?? false) as bool,
       remoteId: json['remoteId'] as String?,
+      // Absent flag = stored by an older version = accepted (see above).
+      connectionStatus:
+          connectionStatusFromName(json['connectionStatus'] as String?),
     );
   }
 

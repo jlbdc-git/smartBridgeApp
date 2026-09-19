@@ -102,9 +102,36 @@ class _FriendsScreenState extends State<FriendsScreen> {
   Widget build(BuildContext context) {
     final bool blindMode = widget.session.profile?.role == UserRole.blind;
     final ColorScheme scheme = Theme.of(context).colorScheme;
+    final int pendingCount = _friends
+        .where((Friend f) => f.connectionStatus == ConnectionStatus.pending)
+        .length;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('My friends')),
+      appBar: AppBar(
+        title: const Text('My friends'),
+        actions: <Widget>[
+          IconButton(
+            tooltip: 'Friend requests',
+            icon: Badge(
+              isLabelVisible: pendingCount > 0,
+              label: Text('$pendingCount'),
+              child: const Icon(Icons.mark_email_unread_outlined, size: 26),
+            ),
+            onPressed: () async {
+              final NavigatorState navigator = Navigator.of(context);
+              if (widget.session.profile?.role == UserRole.blind) {
+                await widget.session.tts
+                    .speakConfirmation('Opening friend requests.');
+              }
+              if (!mounted) return;
+              await navigator.pushNamed('/friend-requests');
+              if (!mounted) return;
+              await _refresh();
+            },
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'friendsFab',
         onPressed: () async {
@@ -175,13 +202,15 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     subtitle: Text(
                       friend.isSample
                           ? 'TEST contact - replies automatically'
-                          : <String>[
-                              friend.role == UserRole.blind
-                                  ? 'Blind user'
-                                  : 'Deaf user',
-                              if (friend.isReachableOnline)
-                                'chat from anywhere',
-                            ].join(' - '),
+                          : friend.connectionStatus == ConnectionStatus.pending
+                              ? 'Waiting for them to accept your request'
+                              : <String>[
+                                  friend.role == UserRole.blind
+                                      ? 'Blind user'
+                                      : 'Deaf user',
+                                  if (friend.isReachableOnline)
+                                    'chat from anywhere',
+                                ].join(' - '),
                     ),
                     trailing: IconButton(
                       tooltip: 'Remove ${friend.name}',

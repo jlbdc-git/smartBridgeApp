@@ -28,6 +28,10 @@ class _FakeBackend implements RemoteBackend {
   /// When false, message uploads report failure (simulates being offline).
   bool acceptSends = true;
 
+  /// When non-null, uploads throw this (simulates the server's row level
+  /// security refusing a message because the friendship is not confirmed).
+  bool refuseWithPolicyException = false;
+
   /// Every sendMessage call, as (messageId, receiverBackendId).
   final List<(String, String)> sent = <(String, String)>[];
 
@@ -78,6 +82,13 @@ class _FakeBackend implements RemoteBackend {
   Stream<RemoteRequest> get incomingRequests => _requests.stream;
 
   @override
+  Stream<RemoteFriendship> get friendshipUpdates =>
+      _friendshipUpdates.stream;
+
+  final StreamController<RemoteFriendship> _friendshipUpdates =
+      StreamController<RemoteFriendship>.broadcast();
+
+  @override
   Future<void> initialize() async {
     _state = BackendState.ready;
     _states.add(_state);
@@ -101,16 +112,30 @@ class _FakeBackend implements RemoteBackend {
   Future<RemotePeer?> lookupInviteCode(String code) async => null;
 
   @override
-  Future<RemotePeer?> requestFriendship(String code) async => null;
+  Future<RemoteRequestOutcome?> requestFriendship(String code) async =>
+      null;
 
   @override
   Future<bool> confirmFriendship(String friendshipId) async => true;
+
+  @override
+  Future<bool> declineFriendship(String friendshipId) async => true;
+
+  @override
+  Future<List<RemoteFriendship>> listMyRequests() async =>
+      const <RemoteFriendship>[];
+
+  @override
+  Future<List<RemotePeer>> confirmedFriends() async => const <RemotePeer>[];
 
   @override
   Future<bool> sendMessage(
     ChatMessage message, {
     required String toRemoteUserId,
   }) async {
+    if (refuseWithPolicyException) {
+      throw const PolicyRefusalException('42501 simulated');
+    }
     if (!acceptSends) return false;
     sent.add((message.id, toRemoteUserId));
     return true;
@@ -690,6 +715,153 @@ void main() {
       });
 
       expect(database.loadMessages('backend-stranger'), isEmpty);
+    });
+  });
+
+  // =========================================================================
+  group('Friend request flow (one-sided add + accept)', () {
+    late ChatService chat;
+    late _FakeBackend backend;
+    late RemoteTransport remote;
+
+    setUp(() async {
+      backend = _FakeBackend();
+      await backend.initialize(); // state -> ready, like a real session
+      remote = RemoteTransport(backend: backend, database: database);
+      chat = ChatService(
+        database: database,
+        transport: CompositeChatTransport(<ChatTransport>[_DeadTransport(), remote]),
+        tts: TtsService(),
+      );
+      chat.setMe(const UserProfile(
+        id: 'local-me',
+        name: 'Ana',
+        role: UserRole.blind,
+        remoteId: 'backend-me',
+      ));
+    });
+
+    tearDown(() {
+      chat.dispose();
+      remote.dispose();
+    });
+
+    test('a PENDING friend cannot be messaged over the internet', () async {
+      await database.addFriend(Friend(
+        id: 'backend-bob',
+        name: 'Bob',
+        role: UserRole.deaf,
+        addedAt: DateTime.now(),
+        remoteId: 'backend-bob',
+        connectionStatus: ConnectionStatus.pending,
+      ));
+
+      final ChatMessage stored = await chat.sendMessage(
+        friend: database.findFriend('backend-bob')!,
+        originalText: 'are you free?',
+        translatedText: 'You free?',
+        direction: MessageDirection.blindToDeaf,
+      );
+
+      // Stored locally (offline-first) but NOT delivered: the request is not
+      // accepted yet, so the server would reject the insert (42501).
+      expect(stored.status, MessageStatus.sending);
+      expect(backend.sent, isEmpty,
+          reason: 'no upload attempt may be made for a pending friendship');
+    });
+
+    test('accepting the request releases the queued message', () async {
+      await database.addFriend(Friend(
+        id: 'backend-bob',
+        name: 'Bob',
+        role: UserRole.deaf,
+        addedAt: DateTime.now(),
+        remoteId: 'backend-bob',
+        connectionStatus: ConnectionStatus.pending,
+      ));
+
+      final ChatMessage queued = await chat.sendMessage(
+        friend: database.findFriend('backend-bob')!,
+        originalText: 'are you free?',
+        translatedText: 'You free?',
+        direction: MessageDirection.blindToDeaf,
+      );
+      expect(queued.status, MessageStatus.sending);
+
+      // Bob accepts on his device: the friendship becomes confirmed here.
+      await database.addFriend(
+        database.findFriend('backend-bob')!
+            .copyWith(connectionStatus: ConnectionStatus.accepted),
+      );
+
+      await chat.retryPendingFor('backend-bob');
+
+      expect(backend.sent, hasLength(1));
+      expect(backend.sent.first.$1, queued.id);
+      expect(backend.sent.first.$2, 'backend-bob');
+      expect(
+        database.loadMessages('backend-bob').first.status,
+        MessageStatus.sent,
+      );
+    });
+
+    test('a PolicyRefusalException demotes the link to pending', () async {
+      await database.addFriend(Friend(
+        id: 'backend-refusing',
+        name: 'Rey',
+        role: UserRole.deaf,
+        addedAt: DateTime.now(),
+        remoteId: 'backend-refusing',
+      ));
+
+      // The fake backend plays the server: friendship not confirmed -> the
+      // insert is refused. The refusal must propagate through the composite
+      // transport and flip the local link to pending.
+      backend.refuseWithPolicyException = true;
+
+      final ChatMessage stored = await chat.sendMessage(
+        friend: database.findFriend('backend-refusing')!,
+        originalText: 'hi',
+        translatedText: 'Hi.',
+        direction: MessageDirection.blindToDeaf,
+      );
+
+      // The link is demoted to pending, message stays queued.
+      expect(
+        database.findFriend('backend-refusing')!.connectionStatus,
+        ConnectionStatus.pending,
+      );
+      expect(stored.status, MessageStatus.sending);
+    });
+
+    test('an incoming message from a pending link is still stored', () async {
+      // A message that arrives while OUR request is pending (the other side
+      // accepted on their device, our device has not synced yet) must still
+      // be stored: it is a legitimate friend writing to us.
+      await database.addFriend(Friend(
+        id: 'backend-bob',
+        name: 'Bob',
+        role: UserRole.deaf,
+        addedAt: DateTime.now(),
+        remoteId: 'backend-bob',
+        connectionStatus: ConnectionStatus.pending,
+      ));
+
+      await chat.handleTransportEvent(<String, dynamic>{
+        'type': 'chat',
+        'id': 'm-accepted-side',
+        'senderId': 'backend-bob',
+        'senderName': 'Bob',
+        'receiverId': 'local-me',
+        'originalText': 'hello',
+        'translatedText': 'Hello.',
+        'direction': 'deafToBlind',
+        'timestamp': DateTime.now().toIso8601String(),
+        'status': 'sent',
+        'readByReceiver': false,
+      });
+
+      expect(database.loadMessages('backend-bob'), hasLength(1));
     });
   });
 }

@@ -151,9 +151,126 @@ class SessionService {
     _backendSub = backend?.stateChanges.listen((BackendState state) {
       if (state == BackendState.ready) {
         unawaited(_adoptBackendIdentity());
+        // Reconcile the friend list with the server: requests accepted on
+        // another device (or while the app was closed) become friends here.
+        unawaited(syncFriendships());
       }
       _profileEvents.add(null);
     });
+
+    // A request I SENT was accepted or declined on the other device.
+    _friendshipUpdatesSub = backend?.friendshipUpdates.listen(
+      (RemoteFriendship update) {
+        // Only rows where I am the REQUESTER are emitted here (the backend
+        // filters); `update.incoming` is a belt-and-braces guard.
+        if (update.incoming) return;
+        unawaited(_onOutgoingRequestResolved(update));
+      },
+    );
+  }
+
+  StreamSubscription<RemoteFriendship>? _friendshipUpdatesSub;
+
+  /// The other side just accepted (or declined) my request.
+  Future<void> _onOutgoingRequestResolved(RemoteFriendship update) async {
+    final UserProfile? me = _profile;
+    if (me == null) return;
+
+    if (update.status == RemoteFriendshipStatus.confirmed) {
+      // Promote the pending link to a full friend on THIS device too. Neither
+      // user needs to do anything else.
+      await database.addFriend(
+        Friend(
+          id: update.peer.userId,
+          name: update.peer.displayName,
+          role: update.peer.role,
+          addedAt: DateTime.now(),
+          remoteId: update.peer.userId,
+          connectionStatus: ConnectionStatus.accepted,
+        ),
+      );
+      if (ttsEnabled) {
+        await tts.speakConfirmation(
+          '${update.peer.displayName} accepted your friend request.',
+        );
+      }
+    } else if (update.status == RemoteFriendshipStatus.declined) {
+      await database.addFriend(
+        Friend(
+          id: update.peer.userId,
+          name: update.peer.displayName,
+          role: update.peer.role,
+          addedAt: DateTime.now(),
+          remoteId: update.peer.userId,
+          connectionStatus: ConnectionStatus.pending,
+        ),
+      );
+      if (ttsEnabled) {
+        await tts.speakConfirmation(
+          '${update.peer.displayName} declined your friend request.',
+        );
+      }
+    }
+    _profileEvents.add(null);
+  }
+
+  /// Aligns the local friend list with the server: confirmed rows become
+  /// (or upgrade existing pending entries to) accepted friends; pending rows
+  /// for unknown people are stored as pending links so they appear in the
+  /// Friend Requests section even after a restart.
+  Future<void> syncFriendships() async {
+    final RemoteBackend? api = backend;
+    if (api == null || api.state != BackendState.ready) return;
+    try {
+      final List<RemoteFriendship> rows = await api.listMyRequests();
+      bool changed = false;
+      for (final RemoteFriendship row in rows) {
+        final String peerId = row.peer.userId;
+        final Friend? existing = database.findFriend(peerId) ??
+            database.findFriendByRemoteId(peerId);
+        switch (row.status) {
+          case RemoteFriendshipStatus.confirmed:
+            if (existing == null ||
+                existing.connectionStatus != ConnectionStatus.accepted) {
+              await database.addFriend(
+                Friend(
+                  id: peerId,
+                  name: row.peer.displayName,
+                  role: row.peer.role,
+                  addedAt: existing?.addedAt ?? DateTime.now(),
+                  remoteId: peerId,
+                  connectionStatus: ConnectionStatus.accepted,
+                ),
+              );
+              changed = true;
+            }
+          case RemoteFriendshipStatus.pending:
+            // Record it locally only if it is not represented at all yet; the
+            // Friend Requests screen reads the authoritative list from the
+            // server, this just makes the link visible offline.
+            if (existing == null) {
+              await database.addFriend(
+                Friend(
+                  id: peerId,
+                  name: row.peer.displayName,
+                  role: row.peer.role,
+                  addedAt: DateTime.now(),
+                  remoteId: peerId,
+                  connectionStatus: ConnectionStatus.pending,
+                ),
+              );
+              changed = true;
+            }
+          case RemoteFriendshipStatus.declined:
+            // Nothing to mirror locally; the request screen shows it from the
+            // server list, and a declined row never grants access.
+            break;
+        }
+      }
+      if (changed) _profileEvents.add(null);
+    } catch (_) {
+      // Offline or backend error: local state stays as it is.
+    }
   }
 
   /// Stores the backend user id on the local profile the first time it is
@@ -289,6 +406,49 @@ class SessionService {
 
   // ---------------- Friends ----------------
 
+  /// Accepts an incoming friend request: confirms it on the backend (the
+  /// database enforces that only the invited side can do this) and adds the
+  /// peer locally as an accepted friend. Returns false when the backend
+  /// refused (already handled elsewhere, or a connectivity problem).
+  Future<bool> acceptFriendRequest(RemoteFriendship request) async {
+    final RemoteBackend? api = backend;
+    if (api == null) return false;
+    final bool ok = await api.confirmFriendship(request.friendshipId);
+    if (!ok) return false;
+    await database.addFriend(
+      Friend(
+        id: request.peer.userId,
+        name: request.peer.displayName,
+        role: request.peer.role,
+        addedAt: DateTime.now(),
+        remoteId: request.peer.userId,
+        connectionStatus: ConnectionStatus.accepted,
+      ),
+    );
+    if (ttsEnabled) {
+      await tts.speakConfirmation(
+        '${request.peer.displayName} is now your friend.',
+      );
+    }
+    _profileEvents.add(null);
+    return true;
+  }
+
+  /// Declines an incoming friend request on the backend. The peer stays
+  /// blocked until a fresh request is sent and accepted.
+  Future<bool> declineFriendRequest(RemoteFriendship request) async {
+    final RemoteBackend? api = backend;
+    if (api == null) return false;
+    final bool ok = await api.declineFriendship(request.friendshipId);
+    if (ok && ttsEnabled) {
+      await tts.speakConfirmation(
+        'Request from ${request.peer.displayName} declined.',
+      );
+    }
+    _profileEvents.add(null);
+    return ok;
+  }
+
   /// Removes a friend everywhere: locally (history + blocklist, so their old
   /// code cannot silently re-add them) and on the backend, so they can no
   /// longer read or send anything over the internet.
@@ -329,6 +489,7 @@ class SessionService {
 
   Future<void> dispose() async {
     await _backendSub?.cancel();
+    await _friendshipUpdatesSub?.cancel();
     _profileEvents.close();
     chatService.dispose();
     await transport.dispose();

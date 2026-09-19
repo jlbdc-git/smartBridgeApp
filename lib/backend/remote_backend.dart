@@ -47,6 +47,60 @@ class RemoteRequest {
   final RemotePeer peer;
 }
 
+/// Result of sending a friend request. [confirmed] is true when the server
+/// reports the pair is ALREADY friends (e.g. both scanned each other, or the
+/// re-add path) - otherwise the request is pending the other side's accept.
+class RemoteRequestOutcome {
+  const RemoteRequestOutcome({required this.peer, required this.confirmed});
+
+  final RemotePeer peer;
+  final bool confirmed;
+}
+
+/// One row of my request history, from `list_my_requests()`.
+enum RemoteFriendshipStatus { pending, confirmed, declined }
+
+RemoteFriendshipStatus? friendshipStatusFromName(String? name) {
+  switch (name) {
+    case 'pending':
+      return RemoteFriendshipStatus.pending;
+    case 'confirmed':
+      return RemoteFriendshipStatus.confirmed;
+    case 'declined':
+      return RemoteFriendshipStatus.declined;
+    default:
+      return null;
+  }
+}
+
+class RemoteFriendship {
+  const RemoteFriendship({
+    required this.friendshipId,
+    required this.incoming,
+    required this.status,
+    required this.peer,
+  });
+
+  final String friendshipId;
+
+  /// True when the OTHER person invited me (I can accept/decline).
+  final bool incoming;
+  final RemoteFriendshipStatus status;
+  final RemotePeer peer;
+}
+
+/// The backend refused a write because row level security rejected it -
+/// almost always "the friendship is not confirmed (yet)". This is a STATE
+/// problem, not a connectivity problem: the message must stay queued and the
+/// friend link must flip to pending, but the backend must NOT flip to error
+/// or spam reconnects over it.
+class PolicyRefusalException implements Exception {
+  const PolicyRefusalException(this.message);
+  final String message;
+  @override
+  String toString() => 'PolicyRefusalException: $message';
+}
+
 /// The cloud backend contract.
 ///
 /// IMPLEMENTATIONS
@@ -79,6 +133,10 @@ abstract interface class RemoteBackend {
   /// Inbound connection requests waiting for MY confirmation.
   Stream<RemoteRequest> get incomingRequests;
 
+  /// Changes to requests I SENT: accepted or declined on the other device.
+  /// Also emitted when the whole request list should be re-read.
+  Stream<RemoteFriendship> get friendshipUpdates;
+
   /// Connects, signs in and subscribes. Never throws: failures move [state]
   /// to [BackendState.error]. A no-op when unconfigured.
   Future<void> initialize();
@@ -95,12 +153,27 @@ abstract interface class RemoteBackend {
   /// expired or the backend is unavailable.
   Future<RemotePeer?> lookupInviteCode(String code);
 
-  /// Creates a pending friendship with the owner of [code]. The other side
-  /// still has to confirm before any message can be sent.
-  Future<RemotePeer?> requestFriendship(String code);
+  /// Sends a friend request to the owner of [code]. Returns null when the
+  /// code is unknown/expired or the backend is unavailable; otherwise the
+  /// outcome says whether the pair is already confirmed or still pending the
+  /// other side's acceptance.
+  Future<RemoteRequestOutcome?> requestFriendship(String code);
 
-  /// Accepts a pending friendship (the code owner's side).
+  /// Accepts a pending request (only the invited side can).
   Future<bool> confirmFriendship(String friendshipId);
+
+  /// Declines a pending request (only the invited side can). The requester
+  /// may send a fresh request later.
+  Future<bool> declineFriendship(String friendshipId);
+
+  /// Every friendship row I am part of (pending/confirmed/declined, both
+  /// directions). Powers the Friend Requests section and the startup
+  /// reconciliation that keeps both devices consistent.
+  Future<List<RemoteFriendship>> listMyRequests();
+
+  /// Confirmed friends' public profiles, for reconciling the local friend
+  /// list after a restart or a request accepted while the app was closed.
+  Future<List<RemotePeer>> confirmedFriends();
 
   /// Uploads one message to [toRemoteUserId] (a backend user id, which is not
   /// necessarily the local friend id). Returns false when it could not be

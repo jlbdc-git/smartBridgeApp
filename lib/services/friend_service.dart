@@ -231,11 +231,16 @@ class FriendService {
   ///
   /// [remoteId] is the peer's backend user id when the connection was made by
   /// two backend-enabled builds; it is what makes internet delivery possible.
+  ///
+  /// [status] records how far the connection has progressed: [pending] means
+  /// a request was sent (or received) but the other side has not accepted
+  /// yet - the friend shows in the list but chatting stays blocked.
   Future<Friend> confirmFriendship({
     required String friendId,
     required String friendName,
     required UserRole friendRole,
     String? remoteId,
+    ConnectionStatus status = ConnectionStatus.accepted,
   }) async {
     final Friend friend = Friend(
       id: friendId,
@@ -243,6 +248,7 @@ class FriendService {
       role: friendRole,
       addedAt: DateTime.now(),
       remoteId: remoteId,
+      connectionStatus: status,
     );
     await database.addFriend(friend);
     await clearPendingConfirmation();

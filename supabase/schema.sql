@@ -59,9 +59,10 @@ create table if not exists public.friendships (
   requester_id uuid not null references public.profiles (id) on delete cascade,
   addressee_id uuid not null references public.profiles (id) on delete cascade,
   status       text not null default 'pending'
-                 check (status in ('pending', 'confirmed')),
+                 check (status in ('pending', 'confirmed', 'declined')),
   created_at   timestamptz not null default now(),
   confirmed_at timestamptz,
+  declined_at  timestamptz,
 
   constraint friendships_not_self check (requester_id <> addressee_id),
   constraint friendships_unique_pair unique (requester_id, addressee_id)
@@ -181,8 +182,14 @@ grant execute on function public.lookup_invite_code(text) to authenticated;
 -- RPC: request a friendship using somebody's code
 -- ---------------------------------------------------------------------------
 -- Creates (or revives) a PENDING friendship. It can never create a confirmed
--- friendship on its own: the code owner still has to call
--- confirm_friendship() from their own authenticated session.
+-- friendship on its own, EXCEPT when both people independently invited each
+-- other (mutual intent: the second request auto-confirms the pair instead of
+-- deadlocking on two opposite pending rows). Otherwise the code owner still
+-- has to accept via confirm_friendship() from their own session.
+--
+-- Statuses returned to the client:
+--   'confirmed'  already friends (client adds locally, nothing else to do)
+--   'pending'    request stored / revived; wait for the other side to accept
 create or replace function public.request_friendship(p_code text)
 returns table (
   peer_id      uuid,
@@ -207,16 +214,16 @@ begin
     into target
     from public.profiles p
    where p.invite_code = upper(trim(p_code))
-     and p.id <> me
+     and p.id <> me                    -- can never request yourself
      and p.invite_issued_at is not null
      and p.invite_issued_at >= now() - interval '30 minutes'
    limit 1;
 
   if not found then
-    return;                       -- unknown or expired code
+    return;                            -- unknown or expired code
   end if;
 
-  -- Already connected in either direction?
+  -- Any existing row between us (either direction)?
   select *
     into existing
     from public.friendships f
@@ -225,8 +232,44 @@ begin
    limit 1;
 
   if found then
+    if existing.status = 'confirmed' then
+      return query
+        select target.id, target.display_name, target.role, 'confirmed'::text;
+      return;
+    end if;
+
+    if existing.status = 'pending'
+       and existing.requester_id = target.id then
+      -- They already invited me; my request is mutual intent. Confirm now.
+      update public.friendships
+         set status = 'confirmed',
+             confirmed_at = now(),
+             declined_at = null
+       where id = existing.id;
+      return query
+        select target.id, target.display_name, target.role, 'confirmed'::text;
+      return;
+    end if;
+
+    if existing.status = 'pending' then
+      -- I already have a pending request out. Idempotent: no duplicate.
+      return query
+        select target.id, target.display_name, target.role, 'pending'::text;
+      return;
+    end if;
+
+    -- status = 'declined': re-request replaces the old one with a fresh
+    -- pending request in my direction.
+    update public.friendships
+       set requester_id = me,
+           addressee_id = target.id,
+           status = 'pending',
+           declined_at = null,
+           created_at = now(),
+           confirmed_at = null
+     where id = existing.id;
     return query
-      select target.id, target.display_name, target.role, existing.status;
+      select target.id, target.display_name, target.role, 'pending'::text;
     return;
   end if;
 
@@ -240,6 +283,82 @@ $$;
 
 revoke all on function public.request_friendship(text) from public;
 grant execute on function public.request_friendship(text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- RPC: decline a pending friend request (only the addressee may do this)
+-- ---------------------------------------------------------------------------
+-- A declined row blocks nothing except re-sending: the requester may revive
+-- it later with a new request, and the addressee may accept the new one.
+create or replace function public.decline_friendship(p_friendship_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me      uuid := auth.uid();
+  updated integer;
+begin
+  if me is null then
+    return false;
+  end if;
+
+  update public.friendships f
+     set status = 'declined',
+         declined_at = now()
+   where f.id = p_friendship_id
+     and f.addressee_id = me           -- only the invited side may decline
+     and f.status = 'pending';
+
+  get diagnostics updated = row_count;
+  return updated > 0;
+end;
+$$;
+
+revoke all on function public.decline_friendship(uuid) from public;
+grant execute on function public.decline_friendship(uuid) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- RPC: list every friendship row I am part of
+-- ---------------------------------------------------------------------------
+-- Powers the Friend Requests section (pending / declined / confirmed) and the
+-- startup reconciliation that keeps both devices consistent. Peer data is the
+-- same minimal public profile a QR code already exposes: name + role only.
+create or replace function public.list_my_requests()
+returns table (
+  friendship_id uuid,
+  direction     text,      -- 'incoming' = I was invited, 'outgoing' = I invited
+  status        text,
+  peer_id       uuid,
+  peer_name     text,
+  peer_role     text,
+  requested_at  timestamptz
+)
+language sql
+security definer
+set search_path = public
+as $$
+  select f.id,
+         case when f.addressee_id = (select auth.uid())
+              then 'incoming' else 'outgoing' end,
+         f.status,
+         p.id,
+         p.display_name,
+         p.role,
+         f.created_at
+    from public.friendships f
+    join public.profiles p
+      on p.id = case
+                  when f.addressee_id = (select auth.uid()) then f.requester_id
+                  else f.addressee_id
+                end
+   where f.addressee_id = (select auth.uid())
+      or f.requester_id  = (select auth.uid())
+   order by f.created_at desc;
+$$;
+
+revoke all on function public.list_my_requests() from public;
+grant execute on function public.list_my_requests() to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- RPC: confirm a pending friendship (only the addressee may do this)

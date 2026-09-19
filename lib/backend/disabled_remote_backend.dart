@@ -48,6 +48,10 @@ class DisabledRemoteBackend implements RemoteBackend {
       const Stream<RemoteRequest>.empty();
 
   @override
+  Stream<RemoteFriendship> get friendshipUpdates =>
+      const Stream<RemoteFriendship>.empty();
+
+  @override
   Future<void> initialize() async {
     // Intentionally does nothing: no credentials, no connection attempt.
   }
@@ -64,10 +68,20 @@ class DisabledRemoteBackend implements RemoteBackend {
   Future<RemotePeer?> lookupInviteCode(String code) async => null;
 
   @override
-  Future<RemotePeer?> requestFriendship(String code) async => null;
+  Future<RemoteRequestOutcome?> requestFriendship(String code) async => null;
 
   @override
   Future<bool> confirmFriendship(String friendshipId) async => false;
+
+  @override
+  Future<bool> declineFriendship(String friendshipId) async => false;
+
+  @override
+  Future<List<RemoteFriendship>> listMyRequests() async =>
+      const <RemoteFriendship>[];
+
+  @override
+  Future<List<RemotePeer>> confirmedFriends() async => const <RemotePeer>[];
 
   @override
   Future<bool> sendMessage(

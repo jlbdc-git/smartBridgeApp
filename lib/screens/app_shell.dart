@@ -10,6 +10,7 @@ import '../services/session_service.dart';
 import 'add_friend_screen.dart';
 import 'blind_translator_screen.dart';
 import 'chat_screen.dart';
+import 'friend_requests_screen.dart';
 import 'friends_screen.dart';
 import 'home_screen.dart';
 import 'legacy/about_screen.dart' as legacy;
@@ -257,6 +258,11 @@ class _AppRootState extends State<AppRoot> {
             return MaterialPageRoute<void>(
               builder: (BuildContext context) =>
                   AddFriendScreen(session: widget.session),
+            );
+          case '/friend-requests':
+            return MaterialPageRoute<void>(
+              builder: (BuildContext context) =>
+                  FriendRequestsScreen(session: widget.session),
             );
           case '/chat':
             final String friendId = settings.arguments as String;

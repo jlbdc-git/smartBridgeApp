@@ -63,6 +63,9 @@ class _AddFriendScreenState extends State<AddFriendScreen>
       setState(() {}); // drives the countdown text
     });
     _requestSub = widget.session.backend?.incomingRequests.listen(_onRequest);
+    // Requests that arrived while this screen was closed: fetch once now
+    // (realtime covers everything that arrives later).
+    unawaited(_refreshRequests());
   }
 
   @override
@@ -88,11 +91,40 @@ class _AddFriendScreenState extends State<AddFriendScreen>
 
   void _onRequest(RemoteRequest request) {
     if (!mounted) return;
+    if (_requests.any((RemoteRequest r) => r.friendshipId == request.friendshipId)) {
+      return;
+    }
     setState(() => _requests.add(request));
     _session.tts.speakConfirmation(
-      '${request.peer.displayName} scanned your code and wants to connect. '
-      'Tap Confirm connection.',
+      '${request.peer.displayName} sent you a friend request. '
+      'Tap Accept connection.',
     );
+  }
+
+  /// Loads the pending list from the server so requests that arrived while
+  /// this screen was closed (or while the app was offline) are visible.
+  Future<void> _refreshRequests() async {
+    final RemoteBackend? backend = _backend;
+    if (backend == null || backend.state != BackendState.ready) return;
+    try {
+      final List<RemoteFriendship> rows = await backend.listMyRequests();
+      if (!mounted) return;
+      setState(() {
+        _requests
+          ..clear()
+          ..addAll(<RemoteRequest>[
+            for (final RemoteFriendship row in rows)
+              if (row.incoming && row.status == RemoteFriendshipStatus.pending)
+                RemoteRequest(
+                  friendshipId: row.friendshipId,
+                  peer: row.peer,
+                ),
+          ]);
+      });
+    } catch (_) {
+      // The realtime stream still delivers live requests; failing to refresh
+      // the list is not worth an error dialog.
+    }
   }
 
   Future<void> _confirmRequest(RemoteRequest request) async {
@@ -102,7 +134,7 @@ class _AddFriendScreenState extends State<AddFriendScreen>
     try {
       final bool ok = await backend.confirmFriendship(request.friendshipId);
       if (!ok) {
-        _showError('Could not confirm the connection. Please try again.');
+        _showError('Could not accept the request. Please try again.');
         return;
       }
       // The peer's backend id doubles as their local friend id for internet
@@ -129,8 +161,27 @@ class _AddFriendScreenState extends State<AddFriendScreen>
     }
   }
 
-  void _dismissRequest(RemoteRequest request) {
-    setState(() => _requests.remove(request));
+  /// Declines on the server AND locally: the requester stays blocked until
+  /// they send (and the user accepts) a fresh request.
+  Future<void> _declineRequest(RemoteRequest request) async {
+    final RemoteBackend? backend = _backend;
+    if (backend == null || _busy) return;
+    setState(() => _busy = true);
+    try {
+      await backend.declineFriendship(request.friendshipId);
+      if (!mounted) return;
+      setState(() => _requests.remove(request));
+      if (_session.profile?.role == UserRole.blind) {
+        await _session.tts
+            .speakConfirmation('Request from ${request.peer.displayName} declined.');
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Request declined')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   // ---------------- Flow: enter / scan a code ----------------
@@ -162,18 +213,22 @@ class _AddFriendScreenState extends State<AddFriendScreen>
     String? remoteId = identity.remoteId;
 
     // Internet path: let the server resolve the code. This is an exact match
-    // only - there is no way to enumerate or search users - and it also creates
-    // the pending request the other side has to confirm.
+    // only - there is no way to enumerate or search users - and it creates a
+    // FRIEND REQUEST the other person still has to accept. One-sided adding
+    // over the internet was never possible (the messages RLS enforces it).
     final RemoteBackend? backend = _backend;
+    bool requestPending = false;
     if (backend != null && backend.state == BackendState.ready) {
-      final RemotePeer? peer = await backend.requestFriendship(identity.code);
-      if (peer != null) {
-        remoteId = peer.userId;
-        friendName = peer.displayName;
-        friendRole = peer.role;
+      final RemoteRequestOutcome? outcome =
+          await backend.requestFriendship(identity.code);
+      if (outcome != null) {
+        remoteId = outcome.peer.userId;
+        friendName = outcome.peer.displayName;
+        friendRole = outcome.peer.role;
         // For internet connections the backend id is the local id too, so a
         // message received from them always lands in this same conversation.
-        friendId = peer.userId;
+        friendId = outcome.peer.userId;
+        requestPending = !outcome.confirmed;
       } else if (!identity.fromQr) {
         // A typed code that the server does not recognise cannot be resolved
         // locally either, so be honest instead of creating a dead contact.
@@ -191,6 +246,7 @@ class _AddFriendScreenState extends State<AddFriendScreen>
       name: friendName,
       role: friendRole,
       online: remoteId != null,
+      pending: requestPending,
     );
     if (confirmed != true || !mounted) return;
 
@@ -199,14 +255,20 @@ class _AddFriendScreenState extends State<AddFriendScreen>
       friendName: friendName,
       friendRole: friendRole,
       remoteId: remoteId,
+      status: requestPending
+          ? ConnectionStatus.pending
+          : ConnectionStatus.accepted,
     );
 
+    final String message = requestPending
+        ? 'Friend request sent to $friendName.'
+        : '$friendName is now your friend.';
     if (_session.profile?.role == UserRole.blind) {
-      await _session.tts.speakConfirmation('$friendName is now your friend.');
+      await _session.tts.speakConfirmation(message);
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$friendName is now your friend')),
+      SnackBar(content: Text(message)),
     );
     Navigator.of(context).pop();
   }
@@ -215,20 +277,33 @@ class _AddFriendScreenState extends State<AddFriendScreen>
     required String name,
     required UserRole role,
     required bool online,
+    required bool pending,
   }) {
     final String roleLabel =
         role == UserRole.blind ? 'blind user' : 'deaf user';
+    // HONEST dialog: over the internet the other person must accept before
+    // any chatting is possible. Over LAN the connection is direct and
+    // immediate, as before. The old text ("Both of you must confirm")
+    // described a flow that no longer exists on the internet path.
+    final String outcome;
+    if (pending) {
+      outcome = 'A friend request will be sent. You can chat once $name '
+          'accepts the request.';
+    } else if (online) {
+      outcome = 'You are already friends with $name.';
+    } else {
+      outcome = 'You will connect directly while both devices are on the '
+          'same Wi-Fi.';
+    }
     return showDialog<bool>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
-        title: const Text('Confirm connection'),
+        title: Text(pending ? 'Send friend request' : 'Confirm connection'),
         content: Text(
           'Connect with $name ($roleLabel)?\n\n'
-          'They will appear in your friends list and you can start chatting. '
-          'Both of you must confirm.'
-          // Telling the user which transport will be used is useful when a
-          // connection looks like it worked but messages never arrive.
-          '${online ? '\n\nYou can chat from anywhere over the internet.' : '\n\nYou can chat while both devices are on the same Wi-Fi.'}',
+          '$outcome\n\n'
+          'They will appear in your friends list immediately.'
+          '${online ? '\n\nYou can chat from anywhere over the internet once accepted.' : '\n\nYou can chat while both devices are on the same Wi-Fi.'}',
         ),
         actions: [
           TextButton(
@@ -237,7 +312,7 @@ class _AddFriendScreenState extends State<AddFriendScreen>
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Connect'),
+            child: const Text('Send request'),
           ),
         ],
       ),
@@ -358,7 +433,7 @@ class _AddFriendScreenState extends State<AddFriendScreen>
               if (_requests.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 24),
                 Text(
-                  'Waiting for your confirmation',
+                  'Friend requests waiting for your answer',
                   style: Theme.of(context)
                       .textTheme
                       .titleMedium
@@ -397,15 +472,15 @@ class _AddFriendScreenState extends State<AddFriendScreen>
                                       ? null
                                       : () => _confirmRequest(request),
                                   icon: const Icon(Icons.check_rounded),
-                                  label: const Text('Confirm connection'),
+                                  label: const Text('Accept'),
                                 ),
                               ),
                               const SizedBox(width: 8),
                               TextButton(
                                 onPressed: _busy
                                     ? null
-                                    : () => _dismissRequest(request),
-                                child: const Text('Later'),
+                                    : () => _declineRequest(request),
+                                child: const Text('Decline'),
                               ),
                             ],
                           ),

@@ -67,6 +67,8 @@ class SupabaseRemoteBackend implements RemoteBackend {
       StreamController<String>.broadcast();
   final StreamController<RemoteRequest> _requests =
       StreamController<RemoteRequest>.broadcast();
+  final StreamController<RemoteFriendship> _friendshipUpdates =
+      StreamController<RemoteFriendship>.broadcast();
 
   @override
   BackendState get state => _state;
@@ -88,6 +90,9 @@ class SupabaseRemoteBackend implements RemoteBackend {
 
   @override
   Stream<RemoteRequest> get incomingRequests => _requests.stream;
+
+  @override
+  Stream<RemoteFriendship> get friendshipUpdates => _friendshipUpdates.stream;
 
   // ---------------- Lifecycle ----------------
 
@@ -186,7 +191,9 @@ class SupabaseRemoteBackend implements RemoteBackend {
           (status, error) => onChannelStatus('messages', status, error),
         );
 
-    // 2. Friendships addressed to me: an inbound connection request.
+    // 2. Friendships addressed to me. INSERT = an inbound friend request;
+    //    UPDATE = the row changed behind my back (my outgoing request was
+    //    accepted, or was declined by the addressee).
     _friendshipsChannel = client
         .channel('sb-friendships-$uid')
         .onPostgresChanges(
@@ -200,6 +207,14 @@ class SupabaseRemoteBackend implements RemoteBackend {
           ),
           callback: (PostgresChangePayload payload) {
             unawaited(_onFriendshipInsert(payload.newRecord));
+          },
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'friendships',
+          callback: (PostgresChangePayload payload) {
+            unawaited(_onFriendshipUpdate(payload.newRecord, payload.oldRecord));
           },
         )
         .subscribe(
@@ -234,12 +249,47 @@ class SupabaseRemoteBackend implements RemoteBackend {
     if (friendshipId is! String || requester is! String) return;
     // Only genuinely inbound requests are interesting.
     if (requester == _uid) return;
-    if (row['status'] == 'confirmed') return;
+    if (row['status'] != 'pending') return;
 
     final RemotePeer? peer = await _fetchPeer(requester);
     if (peer == null) return;
     _requests.add(
       RemoteRequest(friendshipId: friendshipId, peer: peer),
+    );
+  }
+
+  /// My OUTGOING request was accepted or declined on the other device.
+  /// [oldRecord] carries the previous status (realtime UPDATE payloads only
+  /// include the old row when REPLICA IDENTITY is set; when it is empty the
+  /// client just refreshes its whole request list, which is safe).
+  Future<void> _onFriendshipUpdate(
+    Map<String, dynamic> row,
+    Map<String, dynamic> oldRecord,
+  ) async {
+    final Object? id = row['id'];
+    if (id is! String) return;
+    final Object? requester = row['requester_id'];
+    // Only rows where I am the requester reach this client (the realtime
+    // SELECT policy filters by participant), so an update here is about a
+    // request I sent.
+    if (requester is String && requester != _uid) return;
+
+    final RemoteFriendshipStatus? status =
+        friendshipStatusFromName(row['status']?.toString());
+    if (status == null) return;
+
+    final RemotePeer? peer = await _fetchPeer(
+      row['addressee_id']?.toString() ?? '',
+    );
+    if (peer == null) return;
+
+    _friendshipUpdates.add(
+      RemoteFriendship(
+        friendshipId: id,
+        incoming: false,
+        status: status,
+        peer: peer,
+      ),
     );
   }
 
@@ -340,14 +390,17 @@ class SupabaseRemoteBackend implements RemoteBackend {
   }
 
   @override
-  Future<RemotePeer?> requestFriendship(String code) async {
+  Future<RemoteRequestOutcome?> requestFriendship(String code) async {
     try {
       final List<Map<String, dynamic>> rows = await _rpcRows(
         'request_friendship',
         <String, dynamic>{'p_code': code},
       );
       if (rows.isEmpty) return null;
-      return _peerFromRow(rows.first);
+      final RemotePeer? peer = _peerFromRow(rows.first);
+      if (peer == null) return null;
+      final bool confirmed = rows.first['status']?.toString() == 'confirmed';
+      return RemoteRequestOutcome(peer: peer, confirmed: confirmed);
     } catch (e) {
       _noteFailure(e);
       return null;
@@ -369,6 +422,54 @@ class SupabaseRemoteBackend implements RemoteBackend {
   }
 
   @override
+  Future<bool> declineFriendship(String friendshipId) async {
+    try {
+      await client.rpc<dynamic>(
+        'decline_friendship',
+        params: <String, dynamic>{'p_friendship_id': friendshipId},
+      );
+      return true;
+    } catch (e) {
+      _noteFailure(e);
+      return false;
+    }
+  }
+
+  @override
+  Future<List<RemoteFriendship>> listMyRequests() async {
+    try {
+      final List<Map<String, dynamic>> rows = await _rpcRows(
+        'list_my_requests',
+        <String, dynamic>{},
+      );
+      final List<RemoteFriendship> requests = <RemoteFriendship>[];
+      for (final Map<String, dynamic> row in rows) {
+        final Object? id = row['friendship_id'];
+        final Object? peerId = row['peer_id'];
+        final RemoteFriendshipStatus? status =
+            friendshipStatusFromName(row['status']?.toString());
+        if (id is! String || peerId is! String || status == null) continue;
+        requests.add(
+          RemoteFriendship(
+            friendshipId: id,
+            incoming: row['direction']?.toString() == 'incoming',
+            status: status,
+            peer: RemotePeer(
+              userId: peerId,
+              displayName: row['peer_name']?.toString() ?? 'Friend',
+              role: roleFromName(row['peer_role']?.toString()),
+            ),
+          ),
+        );
+      }
+      return requests;
+    } catch (e) {
+      _noteFailure(e);
+      return const <RemoteFriendship>[];
+    }
+  }
+
+  @override
   Future<void> revokeFriendship(String friendUserId) async {
     try {
       await client.rpc<dynamic>(
@@ -385,6 +486,7 @@ class SupabaseRemoteBackend implements RemoteBackend {
 
   /// New friendships that are already confirmed (e.g. the peer confirmed while
   /// this device was offline) so the local friend list can be reconciled.
+  @override
   Future<List<RemotePeer>> confirmedFriends() async {
     try {
       final List<Map<String, dynamic>> rows = await client
@@ -453,6 +555,17 @@ class SupabaseRemoteBackend implements RemoteBackend {
           );
       return true;
     } catch (e) {
+      // A row level security refusal means "we are not (yet) confirmed
+      // friends" - a STATE the app handles (message stays queued, the friend
+      // link flips to pending), not a backend outage. Re-throw it so the
+      // caller can react precisely, instead of flipping the whole backend to
+      // error and scheduling reconnects (the old behaviour that produced an
+      // endless 42501 log stream).
+      if (e is PostgrestException && e.code == '42501') {
+        throw PolicyRefusalException(
+          'Message rejected: the friendship is not confirmed yet.',
+        );
+      }
       _noteFailure(e);
       return false;
     }
@@ -616,5 +729,6 @@ class SupabaseRemoteBackend implements RemoteBackend {
     await _incoming.close();
     await _online.close();
     await _requests.close();
+    await _friendshipUpdates.close();
   }
 }

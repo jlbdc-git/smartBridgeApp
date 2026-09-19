@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import '../../backend/remote_backend.dart';
 import 'lan_transport.dart';
+export '../../backend/remote_backend.dart' show PolicyRefusalException;
 
 /// Presents several transports as one [ChatTransport].
 ///
@@ -63,6 +65,13 @@ class CompositeChatTransport implements ChatTransport {
     for (final ChatTransport transport in transports) {
       try {
         if (await transport.sendToFriend(friendId, payload)) return true;
+      } on PolicyRefusalException {
+        // A row level security refusal is a DEFINITIVE answer from the server
+        // ("this friendship is not confirmed"), not a transport failure.
+        // It must reach the caller, which demotes the friend link to pending
+        // and stops retrying - swallowing it would turn one refusal into an
+        // endless retry loop.
+        rethrow;
       } catch (_) {
         // Try the next transport.
       }
