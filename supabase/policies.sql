@@ -19,10 +19,18 @@ alter table public.profiles    enable row level security;
 alter table public.friendships enable row level security;
 alter table public.messages    enable row level security;
 
--- Belt and braces: without this, a table owner is still exempt from RLS.
-alter table public.profiles    force row level security;
-alter table public.friendships force row level security;
-alter table public.messages    force row level security;
+-- NOTE: `force row level security` is deliberately NOT used here.
+-- FORCE would subject the table OWNER to RLS as well - and the
+-- SECURITY DEFINER functions in schema.sql (request_friendship,
+-- confirm_friendship, revoke_friendship) run as the owner. Since
+-- `friendships` intentionally has no INSERT/UPDATE/DELETE policies,
+-- FORCE would make every one of those functions fail with a policy
+-- violation, and the whole connection flow would break.
+--
+-- Without FORCE, RLS still applies to every client session: the mobile app
+-- connects as `anon`/`authenticated`, neither of which owns any table, so
+-- default-deny remains the effective boundary. FORCE only protects against
+-- a client acting as the table owner, which the anon key can never grant.
 
 -- ============================================================================
 --  profiles

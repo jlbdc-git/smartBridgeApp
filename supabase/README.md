@@ -143,7 +143,29 @@ Nothing else is collected anywhere in the app.
 
 ---
 
-## 6. Status: what is and is not verified
+## 6. Troubleshooting: errors seen on the live project (19 Sep 2026)
+
+The app was pointed at the real project before the grants below were added, and
+the dashboard logs showed exactly two error families. **Both are fixed by
+running `fix_grants.sql` in the SQL Editor (takes a few seconds, safe to
+re-run, touches no data).**
+
+| Error in logs | Meaning | Fixed by |
+|---|---|---|
+| `42501 permission denied for table friendships` (also `profiles`) | The May 2026 platform change stopped exposing new `public` tables to the Data API automatically. `create table` no longer grants the `authenticated` role access — the app's requests never even reach row level security. | `GRANT SELECT/INSERT/UPDATE ... TO authenticated` in `fix_grants.sql` |
+| `P0001 invalid column for filter addressee_id` (also `receiver_id`) | Realtime validates a channel's filter by querying the table with an internal reader role. Without `SELECT` for that role, validation fails and the channel is rejected — the message sounds like a wrong column name, but the column exists. | `GRANT SELECT ... TO supabase_realtime_admin` in `fix_grants.sql` |
+
+`schema.sql` now contains the same grants (section "Table grants"), so a
+project set up from scratch never hits this. The app also monitors channel
+status now and surfaces a rejected subscription in Settings instead of
+silently showing "ready" with no live updates.
+
+After running `fix_grants.sql`: force-close and reopen the app. Channel
+subscriptions are only attempted at startup.
+
+---
+
+## 7. Status: what is and is not verified
 
 | Item | Status |
 |---|---|
@@ -155,5 +177,7 @@ Nothing else is collected anywhere in the app.
 | A privileged key is refused by the client | **PASSED** (unit tests) |
 | The client-side transport, routing and outbox logic | **PASSED** (unit tests against a fake backend) |
 
-Nobody has connected this to a real project yet. Treat the first setup as a
-test run, and start with two test accounts.
+A device reached the real project on 19 Sep 2026 (connection + auth work), but
+the requests above failed at the database until `fix_grants.sql` is run, so no
+backend data path can be called verified yet. Treat the first setup as a test
+run, and start with two test accounts.

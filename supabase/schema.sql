@@ -348,3 +348,25 @@ begin
   end loop;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Table grants (REQUIRED since the May 2026 platform change)
+-- ---------------------------------------------------------------------------
+-- Since Supabase stopped exposing new public tables to the Data API
+-- automatically, `create table` alone is not enough: without these grants
+-- every client request fails with `42501 permission denied for table ...`.
+--
+-- RLS stays enabled and forced on all three tables (policies.sql), so these
+-- grants only let a request reach the database - row security still decides
+-- which rows are visible. Nothing is granted to `anon`: the app only ever
+-- talks to the API after sign-in, as `authenticated`.
+grant select, insert, update on public.profiles    to authenticated;
+grant select, insert, update on public.messages    to authenticated;
+grant select                 on public.friendships to authenticated;
+
+-- The realtime reader role must be able to SELECT these tables to validate
+-- postgres_changes filters. Without this the subscription is rejected with
+-- `P0001 invalid column for filter <column>` even though the column exists.
+grant select on public.profiles    to supabase_realtime_admin;
+grant select on public.friendships to supabase_realtime_admin;
+grant select on public.messages    to supabase_realtime_admin;

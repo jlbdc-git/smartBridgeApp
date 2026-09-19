@@ -127,6 +127,44 @@ class SupabaseRemoteBackend implements RemoteBackend {
 
     final String uid = _uid!;
 
+    // Realtime authorises each subscription with the CURRENT access token.
+    // `SupabaseClient` pushes the token on sign-in events, but that push is
+    // fire-and-forget (unawaited upstream), so it can race the first
+    // subscribe after a cold start. Push it explicitly and await it so the
+    // join payload always carries a fresh, authenticated JWT.
+    try {
+      await client.realtime.setAuth(
+        client.auth.currentSession?.accessToken,
+      );
+    } catch (_) {
+      // Not fatal: the socket may already carry a valid token from the
+      // supabase_flutter listener. Individual channel statuses below will
+      // still surface an auth rejection.
+    }
+
+    // Status callback shared by all three channels. A rejected subscription
+    // (RLS grant missing, filter validation failed, token stale) must be
+    // VISIBLE, not silently swallowed - otherwise the app looks ready while
+    // no live updates ever arrive.
+    void onChannelStatus(String name, RealtimeSubscribeStatus status,
+        Object? error) {
+      if (_disposed) return;
+      switch (status) {
+        case RealtimeSubscribeStatus.subscribed:
+          _lastError = null;
+        case RealtimeSubscribeStatus.channelError:
+        case RealtimeSubscribeStatus.timedOut:
+          _noteFailure(
+            'Realtime channel "$name" failed: ${error ?? status.name}',
+          );
+        case RealtimeSubscribeStatus.closed:
+          // Normal when we unsubscribe ourselves; only note it mid-session.
+          if (_state == BackendState.ready) {
+            _noteFailure('Realtime channel "$name" closed unexpectedly.');
+          }
+      }
+    }
+
     // 1. New messages addressed to me.
     _messagesChannel = client
         .channel('sb-messages-$uid')
@@ -144,7 +182,9 @@ class SupabaseRemoteBackend implements RemoteBackend {
             if (message != null) _incoming.add(message);
           },
         )
-        .subscribe();
+        .subscribe(
+          (status, error) => onChannelStatus('messages', status, error),
+        );
 
     // 2. Friendships addressed to me: an inbound connection request.
     _friendshipsChannel = client
@@ -162,7 +202,9 @@ class SupabaseRemoteBackend implements RemoteBackend {
             unawaited(_onFriendshipInsert(payload.newRecord));
           },
         )
-        .subscribe();
+        .subscribe(
+          (status, error) => onChannelStatus('friendships', status, error),
+        );
 
     // 3. Friends' profile heartbeats. RLS means this only ever delivers rows
     //    for me and my confirmed friends, so no client-side filtering of
@@ -181,7 +223,9 @@ class SupabaseRemoteBackend implements RemoteBackend {
             if (_isRecentlySeen(row['last_seen_at'])) _online.add(id);
           },
         )
-        .subscribe();
+        .subscribe(
+          (status, error) => onChannelStatus('profiles', status, error),
+        );
   }
 
   Future<void> _onFriendshipInsert(Map<String, dynamic> row) async {
