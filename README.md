@@ -5,10 +5,8 @@ SmartBridge Messages is an accessibility-focused messaging app that lets a
 
 > **Different ways of communicating, one shared conversation.**
 
-It builds on the original SmartBridge sign-language translator: the camera
-sign-recognition pipeline, speech-to-text, text-to-speech, onboarding and all
-accessibility settings are preserved and reachable inside the new app
-(Settings → Sign tools).
+It builds on the original SmartBridge project: speech-to-text, text-to-speech,
+onboarding and all accessibility settings are preserved inside the app.
 
 ## Communication flows
 
@@ -132,7 +130,7 @@ empty Friends/Home screen) installs a local test contact:
 8. Deaf Translator — typed input, live improvement, emotion picker, preview
 9. Settings — profile, role, TTS rate/pitch/volume, notifications, vibration,
    font size, high contrast, reduce motion, delete conversations, remove
-   friends, privacy notes, and the original sign-tool settings
+   friends and privacy notes
 
 ## Project structure
 
@@ -158,9 +156,9 @@ supabase/                    schema.sql, policies.sql, setup guide
 
 ## Permissions
 
-Microphone, camera and notifications are requested **only when the related
-feature is first used**, never at startup. Storage access is not required;
-all data lives in app-private storage.
+Microphone (voice messages) and camera (scanning a friend's QR code) are
+requested **only when the related feature is first used**, never at startup.
+Storage access is not required; all data lives in app-private storage.
 
 ## Error handling
 

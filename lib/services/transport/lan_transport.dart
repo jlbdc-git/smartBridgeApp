@@ -130,9 +130,10 @@ class LanTransport implements ChatTransport {
   }
 
   void _handlePacket(Datagram packet) {
-    try {        final Map<String, dynamic> message =
-            (jsonDecode(utf8.decode(packet.data)) as Map<String, dynamic>)
-                .cast<String, dynamic>();
+    try {
+      final Map<String, dynamic> message =
+          (jsonDecode(utf8.decode(packet.data)) as Map<String, dynamic>)
+              .cast<String, dynamic>();
       if (message['id'] == _identity['id']) return; // my own echo
       _addresses[message['id'] as String? ?? ''] = packet.address.address;
       _events.add(message);
@@ -181,14 +182,6 @@ class LanTransport implements ChatTransport {
     final String? address = _addresses[friendId];
     if (address == null) return Future<bool>.value(false);
     return sendToAddress(address, payload);
-  }
-
-  String? addressOf(String friendId) => _addresses[friendId];
-
-  /// Called when a direct send fails: forget the address so discovery can
-  /// refresh it.
-  void forgetAddress(String friendId) {
-    _addresses.remove(friendId);
   }
 
   void dispose() {

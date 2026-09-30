@@ -5,7 +5,7 @@
 
 - [x] Scaffold the Project (Flutter project created using flutter create)
 
-- [x] Customize the Project (App code implemented with camera, TTS, STT, model loading)
+- [x] Customize the Project (App code implemented with TTS, STT and messaging)
 
 - [ ] Install Required Extensions
 	<!-- ONLY install extensions provided mentioned in the get_project_setup_info. Skip this step otherwise and mark as completed. -->

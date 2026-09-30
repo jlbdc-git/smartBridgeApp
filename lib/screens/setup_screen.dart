@@ -72,6 +72,16 @@ class _SetupScreenState extends State<SetupScreen> {
     final bool blindChosen = _role == UserRole.blind;
 
     return Scaffold(
+      bottomNavigationBar: BottomActionArea(
+        child: BigButton(
+          label: 'Start',
+          icon: Icons.arrow_forward_rounded,
+          onPressed: _role == null ? null : _complete,
+          subtext: _role == null
+              ? 'Choose I am blind or I am deaf first'
+              : 'You can change this later in Settings',
+        ),
+      ),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -140,12 +150,6 @@ class _SetupScreenState extends State<SetupScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                BigButton(
-                  label: 'Start',
-                  icon: Icons.arrow_forward_rounded,
-                  onPressed: _role == null ? null : _complete,
-                  subtext: 'You can change this later in Settings',
-                ),
                 if (blindChosen)
                   Padding(
                     padding: const EdgeInsets.only(top: 10),

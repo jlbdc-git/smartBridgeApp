@@ -6,8 +6,10 @@ import '../widgets/accessibility.dart';
 
 /// Role-adaptive home.
 ///
-/// Blind mode: three giant spoken buttons (voice message, read messages,
-/// friends). Deaf mode: the conversation list with a visible notification bar.
+/// Blind mode: audio-first, a few very large spoken buttons; the primary
+/// action (voice message) sits at the bottom.
+/// Deaf mode: the conversation list with one large add-friend action at the
+/// bottom.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
     super.key,
@@ -16,6 +18,7 @@ class HomeScreen extends StatelessWidget {
     required this.onOpenSettings,
     required this.onAddSampleFriend,
     required this.unreadCount,
+    required this.pendingRequestCount,
   });
 
   final SessionService session;
@@ -25,6 +28,9 @@ class HomeScreen extends StatelessWidget {
   /// Adds the built-in TEST contact (no real person involved).
   final Future<void> Function() onAddSampleFriend;
   final int unreadCount;
+
+  /// Friend requests waiting for this user's answer.
+  final int pendingRequestCount;
 
   @override
   Widget build(BuildContext context) {
@@ -36,18 +42,20 @@ class HomeScreen extends StatelessWidget {
             onOpenTranslator: onOpenTranslator,
             onOpenSettings: onOpenSettings,
             unreadCount: unreadCount,
+            pendingRequestCount: pendingRequestCount,
           )
         : _DeafHome(
             session: session,
             onOpenSettings: onOpenSettings,
             onAddSampleFriend: onAddSampleFriend,
             unreadCount: unreadCount,
+            pendingRequestCount: pendingRequestCount,
           );
   }
 }
 
 // ---------------------------------------------------------------------------
-// BLIND home: audio-first, three giant buttons
+// BLIND home: audio-first, primary action at the bottom
 // ---------------------------------------------------------------------------
 
 class _BlindHome extends StatelessWidget {
@@ -56,18 +64,28 @@ class _BlindHome extends StatelessWidget {
     required this.onOpenTranslator,
     required this.onOpenSettings,
     required this.unreadCount,
+    required this.pendingRequestCount,
   });
 
   final SessionService session;
   final VoidCallback onOpenTranslator;
   final VoidCallback onOpenSettings;
   final int unreadCount;
+  final int pendingRequestCount;
 
   @override
   Widget build(BuildContext context) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
+      bottomNavigationBar: BottomActionArea(
+        child: BigButton(
+          label: 'Send a voice message',
+          icon: Icons.mic_rounded,
+          subtext: 'Speak, check the simplified text, send',
+          onPressed: onOpenTranslator,
+        ),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -86,19 +104,23 @@ class _BlindHome extends StatelessWidget {
             ),
             const SizedBox(height: 20),
             BigButton(
-              label: 'Send a voice message',
-              icon: Icons.mic_rounded,
-              subtext: 'Speak, check the simplified text, send',
-              onPressed: onOpenTranslator,
-            ),
-            const SizedBox(height: 14),
-            BigButton(
               label: unreadCount > 0
                   ? 'Read $unreadCount new message${unreadCount == 1 ? '' : 's'}'
                   : 'Read my messages',
               icon: Icons.hearing,
               subtext: 'Opens the last conversation',
               onPressed: () => _openLastConversation(context),
+            ),
+            const SizedBox(height: 14),
+            BigButton(
+              label: pendingRequestCount > 0
+                  ? 'Friend requests ($pendingRequestCount)'
+                  : 'Friend requests',
+              icon: Icons.person_add_alt_1_rounded,
+              subtext: pendingRequestCount > 0
+                  ? 'You have $pendingRequestCount waiting for your answer'
+                  : 'See who wants to connect',
+              onPressed: () => _openFriendRequests(context),
             ),
             const SizedBox(height: 14),
             BigButton(
@@ -173,10 +195,22 @@ class _BlindHome extends StatelessWidget {
       Navigator.of(context).pushNamed('/friends');
     }
   }
+
+  Future<void> _openFriendRequests(BuildContext context) async {
+    await session.tts.speakConfirmation(
+      pendingRequestCount > 0
+          ? 'Opening $pendingRequestCount friend request'
+              '${pendingRequestCount == 1 ? '' : 's'}.'
+          : 'Opening friend requests.',
+    );
+    if (context.mounted) {
+      Navigator.of(context).pushNamed('/friend-requests');
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
-// DEAF home: visual conversation list + big add-friend action
+// DEAF home: visual conversation list + large add-friend action
 // ---------------------------------------------------------------------------
 
 class _DeafHome extends StatelessWidget {
@@ -185,12 +219,14 @@ class _DeafHome extends StatelessWidget {
     required this.onOpenSettings,
     required this.onAddSampleFriend,
     required this.unreadCount,
+    required this.pendingRequestCount,
   });
 
   final SessionService session;
   final VoidCallback onOpenSettings;
   final Future<void> Function() onAddSampleFriend;
   final int unreadCount;
+  final int pendingRequestCount;
 
   @override
   Widget build(BuildContext context) {
@@ -208,11 +244,31 @@ class _DeafHome extends StatelessWidget {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'deafHomeFab',
-        onPressed: () => Navigator.of(context).pushNamed('/add-friend'),
-        icon: const Icon(Icons.person_add_alt_rounded),
-        label: const Text('Add friend'),
+      bottomNavigationBar: BottomActionArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (pendingRequestCount > 0) ...[
+              BigButton(
+                label: pendingRequestCount == 1
+                    ? '1 friend request waiting'
+                    : '$pendingRequestCount friend requests waiting',
+                icon: Icons.person_add_alt_1_rounded,
+                onPressed: () =>
+                    Navigator.of(context).pushNamed('/friend-requests'),
+              ),
+              const SizedBox(height: 10),
+            ],
+            BigButton(
+              label: 'Add friend',
+              icon: Icons.person_add_alt_rounded,
+              subtext: 'Show your code or scan a friend\'s code',
+              onPressed: () =>
+                  Navigator.of(context).pushNamed('/add-friend'),
+            ),
+          ],
+        ),
       ),
       body: Column(
         children: [

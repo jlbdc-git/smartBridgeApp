@@ -132,14 +132,19 @@ class _FriendsScreenState extends State<FriendsScreen> {
           const SizedBox(width: 4),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'friendsFab',
-        onPressed: () async {
-          await Navigator.of(context).pushNamed('/add-friend');
-          await _refresh();
-        },
-        icon: const Icon(Icons.person_add_alt_rounded),
-        label: const Text('Add friend'),
+      bottomNavigationBar: BottomActionArea(
+        child: BigButton(
+          label: pendingCount > 0
+              ? 'Add friend  •  $pendingCount request'
+                  '${pendingCount == 1 ? '' : 's'} waiting'
+              : 'Add friend',
+          icon: Icons.person_add_alt_rounded,
+          subtext: 'Show your code or scan a friend\'s code',
+          onPressed: () async {
+            await Navigator.of(context).pushNamed('/add-friend');
+            await _refresh();
+          },
+        ),
       ),
       body: _friends.isEmpty
           ? Column(

@@ -187,6 +187,34 @@ class _BlindTranslatorScreenState extends State<BlindTranslatorScreen> {
       appBar: AppBar(
         title: Text('Voice message to ${widget.friendName}'),
       ),
+      bottomNavigationBar: BottomActionArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            BigButton(
+              label: 'Send message',
+              icon: Icons.send_rounded,
+              onPressed: _hasDraft && !_sending ? _send : null,
+              subtext: _hasDraft
+                  ? null
+                  : 'Speak first, then send',
+            ),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              style: TextButton.styleFrom(
+                minimumSize: const Size.fromHeight(52),
+              ),
+              onPressed: _hasDraft ? _redo : null,
+              icon: const Icon(Icons.refresh_rounded, size: 26),
+              label: const Text(
+                'Start over',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -208,8 +236,8 @@ class _BlindTranslatorScreenState extends State<BlindTranslatorScreen> {
                   onTap: _toggleListening,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
-                    width: 140,
-                    height: 140,
+                    width: 168,
+                    height: 168,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: _listening
@@ -222,7 +250,7 @@ class _BlindTranslatorScreenState extends State<BlindTranslatorScreen> {
                     ),
                     child: Icon(
                       _listening ? Icons.stop_rounded : Icons.mic_rounded,
-                      size: 62,
+                      size: 76,
                       color: _listening ? scheme.error : scheme.primary,
                     ),
                   ),
@@ -258,24 +286,6 @@ class _BlindTranslatorScreenState extends State<BlindTranslatorScreen> {
                   : _simplified,
             ),
             const SizedBox(height: 20),
-            BigButton(
-              label: 'Send message',
-              icon: Icons.send_rounded,
-              onPressed: _hasDraft && !_sending ? _send : null,
-            ),
-            const SizedBox(height: 10),
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size.fromHeight(56),
-              ),
-              onPressed: _hasDraft ? _redo : null,
-              icon: const Icon(Icons.refresh_rounded, size: 26),
-              label: const Text(
-                'Start over',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-              ),
-            ),
-            const SizedBox(height: 10),
             Text(
               'Your meaning is kept. Only the wording gets simpler.',
               textAlign: TextAlign.center,

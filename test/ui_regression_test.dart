@@ -248,4 +248,70 @@ void main() {
       handle.dispose();
     });
   });
+
+  // ==========================================================================
+  group('BottomActionArea', () {
+    const double bottomInset = 40;
+
+    Future<void> pump(
+      WidgetTester tester, {
+      double textScale = 1.0,
+    }) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (BuildContext context, Widget? inner) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: TextScaler.linear(textScale),
+              padding: const EdgeInsets.only(bottom: bottomInset),
+              viewPadding: const EdgeInsets.only(bottom: bottomInset),
+            ),
+            child: inner!,
+          ),
+          home: Scaffold(
+            body: Column(
+              children: <Widget>[
+                const Expanded(child: SizedBox.expand()),
+                BottomActionArea(
+                  note: const Text('Helper note'),
+                  child: BigButton(
+                    label: 'Send a voice message',
+                    icon: Icons.mic_rounded,
+                    subtext: 'Speak, check the simplified text, send',
+                    onPressed: () {},
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('sits at the bottom and clears the system navigation bar',
+        (WidgetTester tester) async {
+      await pump(tester);
+      expect(tester.takeException(), isNull);
+
+      final double screenHeight =
+          tester.getSize(find.byType(Scaffold)).height;
+      final Rect button = tester.getRect(find.byType(BigButton));
+
+      // Bottom-anchored: the action occupies the lower part of the screen so a
+      // one-handed reach can find it...
+      expect(button.bottom, greaterThan(screenHeight * 0.7));
+      // ...and the SafeArea keeps it clear of the system navigation bar.
+      expect(button.bottom, lessThanOrEqualTo(screenHeight - bottomInset));
+      expect(button.height, greaterThanOrEqualTo(68));
+    });
+
+    testWidgets('shows its helper note and never overflows at large text',
+        (WidgetTester tester) async {
+      await pump(tester, textScale: 2.0);
+      expect(tester.takeException(), isNull,
+          reason: 'a RenderFlex overflow would be reported here');
+      expect(find.text('Helper note'), findsOneWidget);
+      expect(find.text('Send a voice message'), findsOneWidget);
+    });
+  });
 }

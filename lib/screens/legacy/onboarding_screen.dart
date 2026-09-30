@@ -14,7 +14,7 @@ class OnboardingFlow extends StatefulWidget {
 
 class _OnboardingFlowState extends State<OnboardingFlow> {
   final PageController _pageController = PageController();
-  static const int _slideCount = 5;
+  static const int _slideCount = 4;
   int _page = 0;
   bool _agreed = false;
   bool _submitting = false;
@@ -187,79 +187,6 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
     );
   }
 
-  Widget _buildTutorialFooter(ColorScheme scheme) {
-    final List<String> supportedGestures = <String>[
-      'Open Palm',
-      'Closed Fist',
-      'Pointing Up',
-      'Thumb Up',
-      'Thumb Down',
-      'Victory',
-      'I Love You',
-      'None',
-    ];
-
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.78),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AspectRatio(
-            aspectRatio: 4 / 3,
-            child: Image.asset(
-              'assets/tutorial/hand_signs_guide.png',
-              fit: BoxFit.contain,
-              width: double.infinity,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Recognized gestures',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: scheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: supportedGestures
-                      .map((String gesture) => Chip(label: Text(gesture)))
-                      .toList(),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  'Tip: Start with Open Palm, Closed Fist, and Victory for best consistency.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'If prediction flickers, move to better lighting and keep only one hand in frame.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildTermsFooter(ColorScheme scheme) {
     return SingleChildScrollView(
       child: Column(
@@ -286,7 +213,7 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                 ),
                 _buildBullet(
                   scheme,
-                  'Camera and microphone data are used only to run translation features while you are using them.',
+                  'Microphone data is used only to turn your voice into a message while you are recording.',
                 ),
                 _buildBullet(
                   scheme,
@@ -316,11 +243,11 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                 const SizedBox(height: 8),
                 _buildBullet(
                   scheme,
-                  'Recognition confidence can vary with lighting, camera angle, and hand visibility.',
+                  'Voice messages can be misunderstood; check the preview before you send.',
                 ),
                 _buildBullet(
                   scheme,
-                  'No cloud upload is required for basic translation flow; permissions can be revoked in Settings.',
+                  'Messages are stored on your device; permissions can be revoked in Settings.',
                 ),
                 _buildBullet(
                   scheme,
@@ -482,14 +409,14 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                                   title:
                                       'Your communication bridge starts here',
                                   body:
-                                      'SmartBridge helps you turn hand gestures, speech, and text into faster two-way communication.',
+                                      'SmartBridge helps a blind person and a deaf person hold one shared conversation.',
                                   footer: Align(
                                     alignment: Alignment.topLeft,
                                     child: Wrap(
                                       spacing: 8,
                                       runSpacing: 8,
                                       children: const [
-                                        Chip(label: Text('Camera recognition')),
+                                        Chip(label: Text('Voice messages')),
                                         Chip(label: Text('Speech-to-text')),
                                         Chip(label: Text('Text-to-speech')),
                                         Chip(
@@ -502,9 +429,9 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                                 _buildSlide(
                                   icon: Icons.hub_outlined,
                                   kicker: 'Workflow',
-                                  title: 'Translate in three quick steps',
+                                  title: 'Two people, one conversation',
                                   body:
-                                      '1) Keep your hand centered. 2) Hold the gesture steady for a moment. 3) Review confidence and optional voice output.',
+                                      'Speak or type your message. Check the preview. Send it. The other person reads it or hears it automatically.',
                                   footer: Align(
                                     alignment: Alignment.topLeft,
                                     child: Column(
@@ -513,27 +440,19 @@ class _OnboardingFlowState extends State<OnboardingFlow> {
                                       children: [
                                         _buildBullet(
                                           scheme,
-                                          'Best performance in bright, even lighting.',
+                                          'Blind: speak and your words become simple text.',
                                         ),
                                         _buildBullet(
                                           scheme,
-                                          'Use one visible hand at a time for clearer results.',
+                                          'Deaf: type and add how you feel.',
                                         ),
                                         _buildBullet(
                                           scheme,
-                                          'Keep 40–80 cm distance from the camera.',
+                                          'Connect with a friend code, then chat.',
                                         ),
                                       ],
                                     ),
                                   ),
-                                ),
-                                _buildSlide(
-                                  icon: Icons.image_search_outlined,
-                                  kicker: 'Tutorial',
-                                  title: 'Sample hand-sign guide',
-                                  body:
-                                      'Use this quick visual reference to practice supported gestures before running live recognition.',
-                                  footer: _buildTutorialFooter(scheme),
                                 ),
                                 _buildSlide(
                                   icon: Icons.accessibility_new,

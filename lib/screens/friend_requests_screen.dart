@@ -55,6 +55,8 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen> {
     super.dispose();
   }
 
+  bool get _blindMode => widget.session.profile?.role == UserRole.blind;
+
   Future<void> _load() async {
     final RemoteBackend? backend = widget.session.backend;
     if (backend == null || backend.state != BackendState.ready) {
@@ -75,6 +77,7 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen> {
         _loading = false;
         _error = null;
       });
+      _announceIfBlind();
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -83,6 +86,21 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen> {
         });
       }
     }
+  }
+
+  /// Blind mode: read the pending count so the user knows what is waiting
+  /// without having to inspect the screen.
+  void _announceIfBlind() {
+    if (!_blindMode) return;
+    final int pending = _incomingPending.length;
+    widget.session.tts.speakConfirmation(
+      pending == 0
+          ? 'No friend requests waiting.'
+          : pending == 1
+              ? 'You have one friend request waiting. '
+                  'Tap accept to add them as a friend.'
+              : 'You have $pending friend requests waiting.',
+    );
   }
 
   List<RemoteFriendship> get _incomingPending => _rows
@@ -271,17 +289,17 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen> {
   }
 
   Widget _requestCard(BuildContext context, RemoteFriendship request) {
-    final bool blindMode = widget.session.profile?.role == UserRole.blind;
+    final bool blindMode = _blindMode;
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
               '${request.peer.displayName} wants to connect with you.',
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
             ),
             const SizedBox(height: 4),
             Text(
@@ -292,34 +310,29 @@ class _FriendRequestsScreenState extends State<FriendRequestsScreen> {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _busy ? null : () => _accept(request),
-                    icon: const Icon(Icons.check_rounded),
-                    label: const Text('Accept'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _busy ? null : () => _decline(request),
-                    icon: const Icon(Icons.close_rounded),
-                    label: const Text('Decline'),
-                  ),
-                ),
-              ],
+            const SizedBox(height: 14),
+            // Large, clearly labelled controls: easy to hit and easy for a
+            // screen reader to describe.
+            BigButton(
+              label: 'Accept friend',
+              icon: Icons.check_circle_rounded,
+              subtext: blindMode
+                  ? 'You and ${request.peer.displayName} can chat'
+                  : null,
+              onPressed: _busy ? null : () => _accept(request),
             ),
-            if (blindMode) ...<Widget>[
-              const SizedBox(height: 8),
-              Text(
-                'Accept lets you and ${request.peer.displayName} chat. '
-                'Decline keeps you disconnected.',
-                style: Theme.of(context).textTheme.bodySmall,
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(58),
               ),
-            ],
+              onPressed: _busy ? null : () => _decline(request),
+              icon: const Icon(Icons.cancel_rounded, size: 26),
+              label: const Text(
+                'Decline',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+              ),
+            ),
           ],
         ),
       ),

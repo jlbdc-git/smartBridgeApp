@@ -5,15 +5,11 @@ import '../models/user_profile.dart';
 import '../services/permission_handler.dart';
 import '../services/session_service.dart';
 import '../widgets/accessibility.dart';
-import 'legacy/settings_screen.dart';
-import 'legacy/sign_translator_screen.dart';
-
 /// Settings for the messaging app.
 ///
 /// Includes every item required by the spec: name, role, text-to-speech,
 /// speech recognition, notifications, font size, high contrast, delete
-/// conversations, remove friends and privacy shortcuts. The original
-/// SmartBridge sign-translator settings stay available under "Sign tools".
+/// conversations, remove friends and privacy shortcuts.
 class AppSettingsScreen extends StatefulWidget {
   const AppSettingsScreen({
     super.key,
@@ -298,49 +294,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                 onChanged: (bool value) => widget.onPreferencesChanged(
                   prefs.copyWith(hapticsEnabled: value),
                 ),
-              ),
-            ],
-          ),
-          // ---------------- Sign tools (original feature set) ----------------
-          _Section(
-            title: 'Sign tools',
-            children: [
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.sign_language_rounded),
-                title: const Text('Open sign translator'),
-                subtitle: const Text(
-                  'The original SmartBridge camera sign recognition.',
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (BuildContext context) => SignTranslatorScreen(
-                      prefs: _session.ui,
-                      onAddHistory: (_) {},
-                      onPreferencesChanged: widget.onPreferencesChanged,
-                    ),
-                  ),
-                ),
-              ),
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.tune_rounded),
-                title: const Text('Recognition settings'),
-                subtitle: const Text(
-                  'Thresholds, frame stride and voice output for sign tools.',
-                ),
-                trailing: const Icon(Icons.chevron_right),                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (BuildContext context) => LegacySettingsScreen(
-                        prefs: _session.ui,
-                        onPreferencesChanged: widget.onPreferencesChanged,
-                        // No onClearHistory: the messaging app keeps no sign
-                        // history, so the button is hidden rather than shown
-                        // and doing nothing.
-                      ),
-                    ),
-                  ),
               ),
             ],
           ),

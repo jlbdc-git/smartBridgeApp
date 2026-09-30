@@ -113,6 +113,13 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  /// Local count of connections still waiting for an answer (the Friend
+  /// Requests screen fetches the authoritative list from the server).
+  int _pendingRequestCount() => _session.database
+      .loadFriends()
+      .where((Friend f) => f.connectionStatus == ConnectionStatus.pending)
+      .length;
+
   /// Adds the built-in TEST contact and refreshes the home list.
   Future<void> _addSampleFriend() async {
     await _session.addSampleFriend();
@@ -165,6 +172,7 @@ class _AppShellState extends State<AppShell> {
             onOpenSettings: () => setState(() => _homeIndex = 1),
             onAddSampleFriend: _addSampleFriend,
             unreadCount: _session.unreadCount(),
+            pendingRequestCount: _pendingRequestCount(),
           ),
           AppSettingsScreen(
             session: _session,

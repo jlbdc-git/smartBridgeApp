@@ -491,6 +491,7 @@ class SessionService {
     await _backendSub?.cancel();
     await _friendshipUpdatesSub?.cancel();
     _profileEvents.close();
+    connectivity.dispose();
     chatService.dispose();
     await transport.dispose();
     lanTransport.dispose();

@@ -86,6 +86,52 @@ class BigButton extends StatelessWidget {
   }
 }
 
+/// Bottom-anchored area for the PRIMARY action of a screen.
+///
+/// Places the main action where a thumb can reach it one-handed, above the
+/// Android system navigation bar via [SafeArea]. It is meant for the single
+/// most important action: secondary actions belong in the scrolling body so
+/// they never compete with it.
+class BottomActionArea extends StatelessWidget {
+  const BottomActionArea({
+    super.key,
+    required this.child,
+    this.note,
+  });
+
+  /// The primary action (usually a [BigButton]).
+  final Widget child;
+
+  /// Optional short helper text shown above the action.
+  final Widget? note;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surface,
+      elevation: 8,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (note != null) ...<Widget>[
+                note!,
+                const SizedBox(height: 10),
+              ],
+              child,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Reusable status banner: offline notice, permission errors, etc.
 class StatusBanner extends StatelessWidget {
   const StatusBanner({
@@ -191,9 +237,6 @@ class PreviewCard extends StatelessWidget {
 }
 
 /// Labelled slider with a live value read-out.
-///
-/// Shared by the messaging settings and the sign-tool settings. Both screens
-/// used to carry their own private copy, which is how they drifted apart.
 class LabeledSlider extends StatelessWidget {
   const LabeledSlider({
     super.key,

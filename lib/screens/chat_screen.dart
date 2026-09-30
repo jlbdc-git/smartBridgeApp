@@ -329,7 +329,7 @@ class _ChatScreenState extends State<ChatScreen> {
           // ---------------- Blind playback bar ----------------
           if (blind)
             Container(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
               decoration: BoxDecoration(
                 color: scheme.surfaceContainerHighest,
                 border: Border(
@@ -338,30 +338,56 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   if (_isSpeakingNow)
                     Padding(
-                      padding: const EdgeInsets.only(bottom: 2),
+                      padding: const EdgeInsets.only(bottom: 4),
                       child: Text(
                         'Speaking...',
+                        textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: 13,
                           fontWeight: FontWeight.w800,
                           color: scheme.primary,
                         ),
                       ),
                     ),
+                  // The MOST important control for a blind user is the play
+                  // button, so it is a full-width, very large, labelled button
+                  // instead of a small icon hidden among siblings.
+                  Semantics(
+                    button: true,
+                    label: 'Play the latest message aloud',
+                    excludeSemantics: true,
+                    onTap: _playLast,
+                    child: FilledButton.icon(
+                      onPressed: _playLast,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(76),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 14,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        textStyle: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      icon: const Icon(Icons.play_arrow_rounded, size: 40),
+                      label: const Text('Play message'),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       _BigControl(
-                        icon: Icons.play_arrow_rounded,
-                        label: 'Play',
-                        onTap: _playLast,
-                      ),
-                      _BigControl(
                         icon: Icons.replay_rounded,
-                        label: 'Replay',
+                        label: 'Replay all',
                         onTap: _replayAll,
                       ),
                       _BigControl(

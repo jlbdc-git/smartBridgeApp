@@ -64,6 +64,30 @@ class _DeafTranslatorScreenState extends State<DeafTranslatorScreen> {
 
     return Scaffold(
       appBar: AppBar(title: Text('Message to ${widget.friendName}')),
+      bottomNavigationBar: BottomActionArea(
+        child: BigButton(
+          label: 'Send message',
+          icon: Icons.send_rounded,
+          onPressed: _canSend
+              ? () => Navigator.of(context).pop(
+                    ChatMessage(
+                      id: 'draft',
+                      senderId: 'draft',
+                      senderName: 'draft',
+                      receiverId: 'draft',
+                      originalText: _input.text.trim(),
+                      translatedText: _improved.trim(),
+                      direction: MessageDirection.deafToBlind,
+                      timestamp: DateTime.now(),
+                      emotion: _emotion,
+                    ),
+                  )
+              : null,
+          subtext: _emotion == null
+              ? 'Pick an emotion first'
+              : 'Your friend hears the emotion too',
+        ),
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
@@ -147,29 +171,6 @@ class _DeafTranslatorScreenState extends State<DeafTranslatorScreen> {
                   ),
                 ),
               ),
-            const SizedBox(height: 20),
-            BigButton(
-              label: 'Send message',
-              icon: Icons.send_rounded,
-              onPressed: _canSend
-                  ? () => Navigator.of(context).pop(
-                        ChatMessage(
-                          id: 'draft',
-                          senderId: 'draft',
-                          senderName: 'draft',
-                          receiverId: 'draft',
-                          originalText: _input.text.trim(),
-                          translatedText: _improved.trim(),
-                          direction: MessageDirection.deafToBlind,
-                          timestamp: DateTime.now(),
-                          emotion: _emotion,
-                        ),
-                      )
-                  : null,
-              subtext: _emotion == null
-                  ? 'Pick an emotion first'
-                  : 'Your friend hears the emotion too',
-            ),
           ],
         ),
       ),

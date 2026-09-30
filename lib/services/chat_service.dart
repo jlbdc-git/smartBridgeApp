@@ -357,8 +357,6 @@ class ChatService {
   Future<void> speakReceived(ChatMessage message) =>
       tts.speakMessage(message);
 
-  Future<void> stopSpeaking() => tts.stop();
-
   void dispose() {
     sampleFriend.dispose();
     _incoming.close();

@@ -589,40 +589,6 @@ class SupabaseRemoteBackend implements RemoteBackend {
     }
   }
 
-  /// Recent history for one friend. Used after a reinstall or a fresh device
-  /// so the conversation is not visually empty while offline copies sync in.
-  Future<List<ChatMessage>> fetchConversation(
-    String friendUserId, {
-    int limit = 200,
-  }) async {
-    final String? uid = _uid;
-    if (uid == null) return const <ChatMessage>[];
-    try {
-      final List<Map<String, dynamic>> rows = await client
-          .from('messages')
-          .select()
-          .or('sender_id.eq.$uid,receiver_id.eq.$uid')
-          .order('created_at', ascending: false)
-          .limit(limit);
-      final List<ChatMessage> messages = <ChatMessage>[];
-      for (final Map<String, dynamic> row in rows) {
-        final String sender = row['sender_id']?.toString() ?? '';
-        final String receiver = row['receiver_id']?.toString() ?? '';
-        // Keep only this pair (the server filter above is a coarse prefilter).
-        if (!((sender == uid && receiver == friendUserId) ||
-            (sender == friendUserId && receiver == uid))) {
-          continue;
-        }
-        final ChatMessage? message = _messageFromRow(row);
-        if (message != null) messages.add(message);
-      }
-      return messages;
-    } catch (e) {
-      _noteFailure(e);
-      return const <ChatMessage>[];
-    }
-  }
-
   // ---------------- Payload mapping ----------------
 
   ChatMessage? _messageFromRow(Map<String, dynamic> row) {

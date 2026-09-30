@@ -8,6 +8,8 @@ class ConnectivityService {
   final StreamController<bool> _controller =
       StreamController<bool>.broadcast();
 
+  StreamSubscription<List<ConnectivityResult>>? _sub;
+
   bool _isOffline = false;
 
   bool get isOffline => _isOffline;
@@ -23,7 +25,7 @@ class ConnectivityService {
           ? ConnectivityResult.none
           : results.first);
 
-      Connectivity().onConnectivityChanged.listen(
+      _sub = Connectivity().onConnectivityChanged.listen(
         (List<ConnectivityResult> results) {
           if (results.isEmpty) {
             _update(ConnectivityResult.none);
@@ -46,6 +48,7 @@ class ConnectivityService {
   }
 
   void dispose() {
+    _sub?.cancel();
     _controller.close();
   }
 }

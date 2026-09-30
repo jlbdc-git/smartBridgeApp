@@ -85,7 +85,7 @@ class AboutPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'A communication assistant with live camera gesture recognition, speech-to-text, and text-to-speech support.',
+                      'A communication assistant that pairs a blind person and a deaf person in one shared conversation, with speech-to-text and text-to-speech support.',
                     ),
                     const SizedBox(height: 12),
                     Text('Version: $version'),
@@ -107,50 +107,26 @@ class AboutPage extends StatelessWidget {
               context: context,
               title: 'System Functions',
               children: const [
-                Text('1. Real-time hand gesture detection with camera input.'),
-                Text('2. Voice transcription using speech recognition.'),
+                Text('1. Voice messages turned into simple text.'),
+                Text('2. Typed messages with a chosen emotion.'),
                 Text('3. Spoken output through text-to-speech.'),
                 Text('4. Accessibility customization and motion controls.'),
-                Text('5. Swipe-based page navigation for easier access.'),
-                Text('6. History logging with confidence summaries.'),
-                Text('7. Adjustable confidence thresholds for recognition.'),
-                Text('8. Manual fallback mode when sensors are unavailable.'),
-              ],
-            ),
-            _sectionCard(
-              context: context,
-              title: 'Hand-Sign Tutorial Guide',
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.asset(
-                    'assets/tutorial/hand_signs_guide.png',
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Practice each gesture in front of the camera. Hold your hand steady for 1-2 seconds and keep your palm within the frame center.',
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Supported classes: Open_Palm, Closed_Fist, Pointing_Up, Thumb_Up, Thumb_Down, Victory, ILoveYou, and None.',
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'For better stability: use even lighting, avoid cluttered backgrounds, and position your hand around 40-80 cm from the camera.',
-                ),
+                Text('5. Friend codes to connect two people safely.'),
+                Text('6. Local chat that works on the same Wi-Fi.'),
+                Text('7. Optional internet messaging when the backend is configured.'),
               ],
             ),
             _sectionCard(
               context: context,
               title: 'Permissions and Privacy',
               children: const [
-                Text('• Camera access is required for gesture recognition.'),
                 Text(
-                  '• Microphone access is required for speech-to-text input.',
+                  '• Microphone access is required for voice messages.',
                 ),
-                Text('• Translation history is stored locally on your device.'),
+                Text(
+                  '• Camera access is used only when you scan a friend\'s QR code.',
+                ),
+                Text('• Your conversations are stored locally on your device.'),
                 Text('• Review app permissions anytime in Settings.'),
               ],
             ),
